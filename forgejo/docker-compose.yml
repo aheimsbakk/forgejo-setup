@@ -1,6 +1,8 @@
-# Forgejo, LAN-only HTTP. All Forgejo configuration lives here as
+# Forgejo, LAN-only HTTPS. All Forgejo configuration lives here as
 # FORGEJO__* environment variables. See docs/forgejo-install-recipe.md.
-# LAN_IP comes from the .env file next to this compose file.
+# LAN_IP comes from the .env file next to this compose file. The TLS
+# certificate is created on the target by gen-cert.sh and lives in
+# /srv/forgejo-certs, outside the data dir so dumps never contain the key.
 services:
   forgejo:
     # Pinned stable release. Bump deliberately; never use :latest.
@@ -10,7 +12,8 @@ services:
     ports:
       # Bound to the LAN IPv4 address only. The host also has a public
       # IPv6 address; binding 0.0.0.0 or [::] would expose Forgejo there.
-      - "${LAN_IP}:80:3000"    # web UI, plain HTTP
+      - "${LAN_IP}:443:3000"   # web UI, git-over-HTTP, API (HTTPS)
+      - "${LAN_IP}:80:80"      # HTTP: redirects to HTTPS, serves nothing else
       - "${LAN_IP}:2222:2222"  # git over SSH (host sshd keeps port 22)
     environment:
       # Match the owner of the /srv/forgejo bind mount on the host.
@@ -20,8 +23,18 @@ services:
       - FORGEJO__database__DB_TYPE=sqlite3
       # Web addressing.
       - FORGEJO__server__DOMAIN=${LAN_IP}
-      - FORGEJO__server__ROOT_URL=http://${LAN_IP}/
+      - FORGEJO__server__ROOT_URL=https://${LAN_IP}/
       - FORGEJO__server__HTTP_PORT=3000
+      # HTTPS with the self-signed certificate from gen-cert.sh. Absolute
+      # paths: the default CERT_FILE/KEY_FILE are relative to CustomPath,
+      # which is inside the data dir and therefore inside backups.
+      - FORGEJO__server__PROTOCOL=https
+      - FORGEJO__server__CERT_FILE=/etc/forgejo/certs/forgejo.crt
+      - FORGEJO__server__KEY_FILE=/etc/forgejo/certs/forgejo.key
+      # Plain HTTP listener that only redirects to ROOT_URL. It keeps
+      # existing http:// clone URLs and bookmarks working.
+      - FORGEJO__server__REDIRECT_OTHER_PORT=true
+      - FORGEJO__server__PORT_TO_REDIRECT=80
       # Git-over-SSH: Forgejo runs its own SSH server. It must not bind
       # port 22 inside the container because the image's OpenSSH daemon
       # already uses it. Listen on 2222, published unchanged on the host.
@@ -34,6 +47,7 @@ services:
       - FORGEJO__service__DISABLE_REGISTRATION=true
     volumes:
       - /srv/forgejo:/data
+      - /srv/forgejo-certs:/etc/forgejo/certs:ro
       - /etc/timezone:/etc/timezone:ro
       - /etc/localtime:/etc/localtime:ro
 
@@ -44,7 +58,9 @@ services:
   #   built with buildah inside jobs instead.
   # - Per-job CPU/memory limits and capacity 2 are set in
   #   /srv/forgejo-runner/config.yaml (see recipe).
-  # - No published ports: the runner only dials the instance.
+  # - No published ports: the runner only dials the instance, over HTTPS.
+  # - The instance certificate is added to the runner's trust store so
+  #   verification stays on (`insecure: false` in the runner config).
   runner:
     # Pinned stable release. Bump deliberately; never use :latest.
     image: data.forgejo.org/forgejo/runner:13.1.0
@@ -59,6 +75,12 @@ services:
     volumes:
       - /srv/forgejo-runner:/data
       - /var/run/docker.sock:/var/run/docker.sock
+      # Required: the runner's Go TLS client trusts the instance only
+      # while this file is present in /etc/ssl/certs. Without the mount
+      # the daemon exits with "x509: certificate signed by unknown
+      # authority". Job containers get the same file plus
+      # GIT_SSL_CAINFO from config.yaml.
+      - /srv/forgejo-certs/forgejo.crt:/etc/ssl/certs/forgejo-lan.crt:ro
       - /etc/timezone:/etc/timezone:ro
       - /etc/localtime:/etc/localtime:ro
     command: ["forgejo-runner", "daemon", "--config", "/data/config.yaml"]

@@ -1,14 +1,17 @@
 # Forgejo LAN Install
 
 A tested recipe and deployment files for running [Forgejo](https://forgejo.org),
-a self-hosted git forge, in Docker on a Debian 13 machine. The instance is
-reachable over plain HTTP from the local network only.
+a self-hosted git forge, in Docker on a Debian 13 machine. The instance
+serves HTTPS on the local network only.
 
 What it gives you:
 
 - Forgejo 16.0.5 (pinned) in Docker, started on boot
-- Web UI on port 80 and git-over-SSH on port 2222, bound to the LAN
-  address only — never to the public interfaces of the machine
+- Web UI on port 443 over HTTPS, port 80 redirects to it, git-over-SSH
+  on port 2222 — all bound to the LAN address only, never to the public
+  interfaces of the machine
+- A self-signed certificate created on the machine; every device that
+  connects trusts it once
 - A daily full backup (database, repositories, config) that keeps the
   7 newest restore points
 - A step-by-step install recipe you can rerun on any fresh Debian 13
@@ -23,15 +26,20 @@ as root on it.
 2. Open `docs/forgejo-install-recipe.md` and follow the
    "Reproduce (full recipe)" section top to bottom. It asks for the
    target IP, an admin username, and an admin password.
-3. When it finishes, open `http://<target-ip>/` in a browser and sign in
-   with the admin account you chose.
+3. Import the certificate (`tmp/certs/forgejo.crt`) on the device you
+   browse from — the "Client trust" section of
+   `docs/forgejo-operations.md` lists the command for each OS.
+4. Open `https://<target-ip>/` in a browser and sign in with the admin
+   account you chose.
 
 ## Using the instance
 
-- Web UI: `http://<target-ip>/` — or `http://forgejo.local/` from any
-  device on the LAN (mDNS discovery)
-- Clone over HTTP: `http://<target-ip>/<owner>/<repo>.git`
+- Web UI: `https://<target-ip>/` — or `https://forgejo.local/` from any
+  device on the LAN (mDNS discovery). Both names are in the certificate.
+- Clone over HTTPS: `https://<target-ip>/<owner>/<repo>.git`
 - Clone over SSH: `ssh://git@<target-ip>:2222/<owner>/<repo>.git`
+- Old `http://` clone URLs keep working: the server answers with a
+  redirect to the same address over HTTPS.
 - New accounts: registration is off. The admin creates accounts under
   Site Administration, or with:
   ```bash
@@ -47,6 +55,20 @@ containers, two jobs at a time, each limited to 1 CPU and 1 GB RAM.
 Build container images with buildah inside jobs; docker-in-docker and
 privileged jobs are not available.
 
+- The instance certificate is already inside job containers at
+  `/etc/ssl/certs/forgejo-lan.crt`, and `GIT_SSL_CAINFO` points there,
+  so `git` over HTTPS works in jobs without extra setup.
+- Inside workflows, address the instance by its LAN address;
+  `forgejo.local` does not resolve reliably in job containers. Most
+  command-line tools already trust the certificate from that directory;
+  Node and Python `requests` need their own variable — see "Access from
+  job containers" in `docs/forgejo-operations.md`.
+- The default job image (`debian:bookworm`) has no git. Pick an image
+  that has it when a job needs git.
+- Actions published on other forges are downloaded by the runner, and
+  jobs can pull images and install packages, so the machine needs
+  outbound internet access.
+
 Recommendation: if you ever allow pull requests from forks, disable or
 gate fork PR workflows in each repository's Actions settings. By default
 they would run the contributor's code on your machine.
@@ -61,8 +83,10 @@ they would run the contributor's code on your machine.
   ```
 - Backups stay on the same machine. Copy them off-site yourself if you
   need protection against disk loss.
+- The TLS private key is not part of a backup; it lives in
+  `/srv/forgejo-certs`. A restore needs a new certificate and new pins.
 - Restore steps: see the "Backup" section of
-  `docs/forgejo-install-recipe.md`.
+  `docs/forgejo-operations.md`.
 
 ## Configuration
 
@@ -73,7 +97,11 @@ they would run the contributor's code on your machine.
   ```bash
   ssh -i <key> root@<target-ip> 'cd /opt/forgejo && docker-compose up -d'
   ```
-- There is no HTTPS. The instance is meant for the local network only.
+- The certificate and key are `/srv/forgejo-certs/forgejo.crt` and
+  `forgejo.key`. Create or renew them with
+  `ssh -i <key> root@<target-ip> '/opt/forgejo/gen-cert.sh'`; they are
+  valid for 5 years. A renewal invalidates every existing pin, so
+  re-import the new `.crt` on each device.
 
 ## Contributing
 
