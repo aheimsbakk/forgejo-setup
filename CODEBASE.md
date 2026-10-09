@@ -26,7 +26,10 @@ Concrete mapping from `BLUEPRINT.md` components to physical files.
 │   ├── gen-cert.sh                  certificate component: self-signed cert
 │   ├── backup.sh                    backup component: dump + retention
 │   ├── forgejo-backup.service       backup activation (oneshot unit)
-│   └── forgejo-backup.timer         backup schedule (daily, catch-up)
+│   ├── forgejo-backup.timer         backup schedule (daily, catch-up)
+│   ├── cleanup.sh                   disk cleanup: unused images, containers
+│   ├── forgejo-cleanup.service      cleanup activation (oneshot unit)
+│   └── forgejo-cleanup.timer        cleanup schedule (daily, catch-up)
 └── scripts/
     ├── bump-version.sh              version bumping (patch|minor|major)
     ├── validate-changelog.sh        changelog format check
@@ -41,6 +44,7 @@ Concrete mapping from `BLUEPRINT.md` components to physical files.
 | Service configuration | `forgejo/docker-compose.yml`, `forgejo/.env.example` |
 | Certificate | `forgejo/gen-cert.sh`; exported copy `tmp/certs/forgejo.crt` (untracked) |
 | Backup | `forgejo/backup.sh`, `forgejo/forgejo-backup.service`, `forgejo/forgejo-backup.timer` |
+| Disk cleanup | `forgejo/cleanup.sh`, `forgejo/forgejo-cleanup.service`, `forgejo/forgejo-cleanup.timer`; grace record `/var/lib/forgejo-cleanup/unused-images.tsv` (on the target, untracked) |
 | Parameter store | `.env` (untracked), `.env.example`, `forgejo/.env.example` |
 | Discovery | recipe change 12–13 (packages + Avahi interface pin) |
 | CI runner | `forgejo/docker-compose.yml` (runner service), recipe changes 14–17 and 20–23 |
@@ -54,6 +58,8 @@ Concrete mapping from `BLUEPRINT.md` components to physical files.
   again before the certificate expires.
 - Backup run: `/opt/forgejo/backup.sh` on the target (source:
   `forgejo/backup.sh`), activated by the systemd timer units.
+- Disk cleanup run: `/opt/forgejo/cleanup.sh` on the target (source:
+  `forgejo/cleanup.sh`), activated by the cleanup timer units.
 - Version tooling: `scripts/bump-version.sh`,
   `scripts/validate-changelog.sh`, `scripts/verify_codebase_sync.sh`.
 
@@ -71,6 +77,9 @@ Concrete mapping from `BLUEPRINT.md` components to physical files.
 - TLS state on the target: `/srv/forgejo-certs/forgejo.crt` and
   `forgejo.key`. The key never leaves the machine; the `.crt` is copied
   to `tmp/certs/` (gitignored) for client and CI pinning.
+- Cleanup state on the target: `/var/lib/forgejo-cleanup/` holds the
+  unused-image grace record. It contains image ids and dates only, and
+  is never copied into the repo.
 
 ## Language rationale
 
@@ -89,3 +98,10 @@ Concrete mapping from `BLUEPRINT.md` components to physical files.
   redirect uses Forgejo's own redirector instead of a second web server.
 - systemd timer units were chosen over cron because the base image has
   no cron and timers provide boot catch-up (`Persistent=true`).
+- `cleanup.sh` is bash for the same reason as `backup.sh`: it drives
+  existing docker CLI calls and adds no runtime to the target. The
+  7-day grace is tracked in a small TSV file because Docker's `until=`
+  filter matches image build dates and container creation times rather
+  than last use, and the engine stores no last-used timestamp. The
+  protected image list is read from the compose file at run time so a
+  version bump cannot leave the stack unprotected.

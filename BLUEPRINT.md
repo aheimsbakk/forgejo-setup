@@ -16,6 +16,9 @@ configuration files deployed to a target machine.
   retention (7 newest).
 - Provide CI (Forgejo Actions) with a runner on the same machine under
   explicit resource limits.
+- Keep the container engine's disk use bounded: images, containers,
+  networks and build cache that stay unused for a set grace period are
+  removed on a daily schedule.
 - Record every change applied to a target so the install is auditable
   and repeatable.
 
@@ -31,6 +34,10 @@ configuration files deployed to a target machine.
   public certificate so clients and CI can pin it.
 - Backup component — dump creation, relocation out of the live data
   directory, retention trimming, scheduled activation.
+- Disk cleanup component — scheduled removal of unused container
+  engine objects (images, stopped containers, networks, build cache)
+  once they have stayed unused through a grace period. The service
+  definition is the source of truth for what must be kept.
 - Parameter store component — per-deployment values (address, admin
   account, key path) kept outside version control.
 - Discovery component — LAN name resolution and announcement.
@@ -49,6 +56,10 @@ configuration files deployed to a target machine.
   writes zip files to a separate backup directory.
 - The runner container dials the instance over HTTPS; it publishes no
   ports.
+- The disk cleanup component reads the service definition to learn
+  which images the stack needs, reads the container engine's object
+  list, and deletes only objects recorded as unused for the whole grace
+  period. It writes its grace record to a host state directory.
 
 ## State Management
 
@@ -64,6 +75,10 @@ configuration files deployed to a target machine.
   host and in the instance database. It also records the instance
   address, so its scheme must match what the instance serves.
 - Deployment parameters: one untracked environment file per checkout.
+- Cleanup grace state: one record per currently unused image, holding
+  the day it was first seen unused. An image becomes removable only
+  after the grace period has passed. The record is rewritten on every
+  run, so it stays bounded by the number of images on the machine.
 
 ## Contracts
 
@@ -84,6 +99,13 @@ configuration files deployed to a target machine.
 - Backup contract: one run produces exactly one new dump file in the
   backup directory and leaves at most 7; the dump contains database,
   repositories, configuration and uploaded data.
+- Disk cleanup contract: one run removes untagged images, images no
+  container references that have been unused for the whole grace
+  period, containers outside the stack that have been stopped for the
+  whole grace period, and unused networks and build cache older than
+  the grace period. It never removes volumes, and never removes an
+  image named by the service definition. A run that cannot read the
+  service definition removes nothing and fails.
 - Error boundaries: access check first; every remote step is verified
   before the next one runs.
 
@@ -97,6 +119,9 @@ configuration files deployed to a target machine.
 - Backups: zip archives named by creation time, retained by count.
 - Parameter store: untracked file, restricted permissions, never
   committed.
+- Cleanup grace record: one small file in a host state directory
+  outside the application data directory. It holds image identifiers
+  and dates only, no secrets.
 
 ## External Interfaces
 
@@ -128,4 +153,7 @@ configuration files deployed to a target machine.
 - The container-engine socket reaches the runner daemon only, never
   job containers; no privileged jobs.
 - Per-job CPU and memory ceilings; fixed runner concurrency.
+- Disk cleanup acts only on objects the container engine reports as
+  unused. Volumes and the images named by the service definition are
+  out of scope, so cleanup cannot delete job data or the stack itself.
 - Secrets and credentials are never written to tracked files.
