@@ -1,0 +1,12 @@
+[Unit]
+Description=Run Forgejo Docker disk cleanup daily
+
+[Timer]
+OnCalendar=*-*-* 04:15:00
+# Run a missed cleanup after boot (machine may be off at 04:15).
+# 04:15 is after the 03:30 backup, so a restore point exists before
+# anything is deleted.
+Persistent=true
+
+[Install]
+WantedBy=timers.target

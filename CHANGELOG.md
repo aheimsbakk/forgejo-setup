@@ -1,5 +1,22 @@
 # Changelog
 
+## [0.3.0] - 2026-10-09
+
+- **why:** CI pulls a new container image per workflow and crashed jobs leave stopped containers behind, so `/var/lib/docker` grew with nothing to reclaim it.
+- **model:** kompis/qwen3.8-flash-next-iq3_s
+- **tags:** forgejo, docker, cleanup, disk, systemd
+
+### Added
+
+- `forgejo/cleanup.sh`: removes untagged images, images unused for 7 days, containers outside the compose stack stopped for 7 days, unused networks and build cache
+- `forgejo/forgejo-cleanup.service` and `forgejo-cleanup.timer`: daily run at 04:15 UTC, after the 03:30 backup, with boot catch-up
+- Grace record `/var/lib/forgejo-cleanup/unused-images.tsv`: an image goes only after 7 days with no container referencing it, because Docker's `until=` filter matches build dates, not last use
+- Recipe changes 24–26, reproduce steps 18–19, and a "Disk space" section in `README.md`
+
+### Security
+
+- Volumes are never removed, and the images named in `docker-compose.yml` are read at run time and protected, so cleanup cannot delete job data or the stack itself
+
 ## [0.2.0] - 2026-10-09
 
 - **why:** Web traffic, including login and clones, crossed the LAN in plain text. HTTPS with a pinned self-signed certificate closes that gap without exposing the machine.

@@ -51,6 +51,10 @@ script loads `.env` and only prompts for what is missing.
 - All Forgejo configuration lives in `forgejo/docker-compose.yml` as
   `FORGEJO__*` environment variables. The LAN IP is the only variable,
   supplied by `/opt/forgejo/.env`.
+- Container disk use is bounded by a daily cleanup job: images unused
+  for 7 days, stopped containers outside the compose stack, unused
+  networks and the build cache. Volumes are never removed, and the
+  images named by the compose file are never removed.
 
 ## Changes applied (first run, anonymized)
 
@@ -79,6 +83,9 @@ script loads `.env` and only prompts for what is missing.
 | 21 | 2026-10-09 | Runner registration address switched from `http://` to `https://` in `/srv/forgejo-runner/.runner` (token and runner id kept) | `sed -i` on the `address` field; `docker restart forgejo-runner` | runners API shows `idle`; Forgejo's log shows the runner's `Declare` POST arriving on the https listener directly |
 | 22 | 2026-10-09 | Job containers pinned to the same certificate: `GIT_SSL_CAINFO` added to runner `envs`, cert mounted read-only through `container.options`, and the path added to `valid_volumes` | `sed`/edit of `/srv/forgejo-runner/config.yaml`; `docker restart forgejo-runner` | smoke job logged `GIT_SSL_CAINFO=/etc/ssl/certs/forgejo-lan.crt` and `git ls-remote https://<IP>/…` succeeded |
 | 23 | 2026-10-09 | CI smoke test over HTTPS: repo `ci-smoke-https` (public) with jobs `plain` and `ca-pin` (job image `data.forgejo.org/forgejo/runner:13.1.0`, which has git), then repo deleted | git clone/push over https with `GIT_SSL_CAINFO`; `GET /api/v1/repos/<ADMIN_USER>/ci-smoke-https/actions/runs` | run 5 `success`; jobs 7 and 8 `success` |
+| 24 | 2026-10-09 | Daily disk cleanup script deployed (7-day grace for unused images, stack images protected from the compose file) | copy `forgejo/cleanup.sh` to `/opt/forgejo/` (mode 755) | first run exit 0, deleted nothing, wrote a grace record for the 2 unused job images |
+| 25 | 2026-10-09 | Cleanup timer installed and enabled (04:15 UTC, catches up after downtime) | copy `forgejo-cleanup.service` + `forgejo-cleanup.timer` to `/etc/systemd/system/`; `systemctl daemon-reload && systemctl enable --now forgejo-cleanup.timer` | `systemctl list-timers` shows next run `Sat 2026-10-10 04:15 UTC` |
+| 26 | 2026-10-09 | Removal paths proved with throwaway objects | `docker create --name cleanup-probe debian:bookworm true`; empty tar imported as `cleanup-probe:scratch`; grace date back-dated in `/var/lib/forgejo-cleanup/unused-images.tsv`; `systemctl start forgejo-cleanup.service` | both probes removed in one run; stack images, running containers, `forgejo_default` network and the two job images inside grace untouched |
 
 Operator-side change (not on the target): the target address was added
 to the operator's `known_hosts` by `StrictHostKeyChecking=accept-new`.
@@ -219,5 +226,15 @@ YML
 git -C /tmp/ci-smoke add -A && git -C /tmp/ci-smoke -c user.email=ci@test -c user.name=ci commit -qm smoke && GIT_SSL_CAINFO="$CA" git -C /tmp/ci-smoke push -q origin main
 sleep 30 && curl -s --cacert "$CA" -u "$ADMIN_USER:$ADMIN_PASSWORD" "https://$IP/api/v1/repos/$ADMIN_USER/ci-smoke-test/actions/runs" | sed -n 's/.*"status":"\([^"]*\)".*/first run: \1/p'
 # clean up afterwards: DELETE /api/v1/repos/$ADMIN_USER/ci-smoke-test
+
+# 18. Daily disk cleanup: script + systemd timer. 04:15 UTC is after the
+# 03:30 backup, so a restore point exists before anything is deleted.
+# The first run only starts the 7-day grace record; it deletes nothing
+# until an image has been unused for a full week.
+scp -i $KEY forgejo/cleanup.sh forgejo/forgejo-cleanup.service forgejo/forgejo-cleanup.timer root@$IP:/opt/forgejo/
+$SSH 'chmod +x /opt/forgejo/cleanup.sh && cp /opt/forgejo/forgejo-cleanup.{service,timer} /etc/systemd/system/ && systemctl daemon-reload && systemctl enable --now forgejo-cleanup.timer'
+
+# 19. Test one cleanup run and confirm the timer is armed
+$SSH 'systemctl start forgejo-cleanup.service && systemctl list-timers forgejo-cleanup.timer'
 ```
 

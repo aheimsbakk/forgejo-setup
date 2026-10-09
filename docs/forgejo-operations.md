@@ -131,6 +131,15 @@ and how client devices trust the certificate.
   resolver sends back link-local IPv6 addresses or the bridge gateway,
   so connections fail or land on the wrong address. Workflows must use
   the LAN address.
+- `docker image prune --filter until=168h` does not mean "unused for a
+  week". `until` matches the image's build date, so a freshly pulled
+  image is usually months old and is deleted the day it arrives.
+  `docker container prune --filter until=` matches the container's
+  creation time, not the time it stopped. Docker keeps no last-used
+  time, so `cleanup.sh` maintains its own grace record.
+- `docker image prune -a` also removes the pinned stack images when the
+  compose stack is stopped, because nothing references them then.
+  `cleanup.sh` protects the images named in the compose file.
 
 ## CI runner (same box)
 
@@ -220,6 +229,36 @@ docker-compose -f /opt/forgejo/docker-compose.yml start forgejo
 ```
 
 Note: the restore procedure is documented but not yet tested end-to-end.
+
+
+## Disk cleanup
+
+- Daily at 04:15 UTC via `forgejo-cleanup.timer` (`Persistent=true`),
+  45 minutes after the backup, so a restore point exists before anything
+  is deleted.
+- Removes: untagged images; tagged images no container references, once
+  they have been unused for 7 days; containers outside the compose stack
+  stopped for 7 days or more; unused networks and the build cache older
+  than 7 days.
+- Never removes: volumes (they can hold job data), containers labelled
+  as part of the compose stack, and any image named by
+  `/opt/forgejo/docker-compose.yml`. The protected image list is read
+  from the compose file at run time, so it follows version bumps.
+- Grace tracking: `/var/lib/forgejo-cleanup/unused-images.tsv` records
+  the day each unused image was first seen. An image is removed only
+  after 7 days in that file. The file is rewritten every run, so it
+  stays small.
+- A run that cannot read the compose file removes nothing and exits 1.
+- The first run deletes nothing; it only starts the grace record.
+- Each run logs `docker system df` before and after:
+  `journalctl -u forgejo-cleanup.service`.
+- Verified on the first target (changes 24–26): the first run deleted
+  nothing and wrote grace records for `debian:bookworm` and
+  `node:20-bookworm`; a throwaway container and a throwaway image with
+  a back-dated record were both removed in a later run; the stack
+  images, the running containers and the `forgejo_default` network were
+  untouched. `docker system df` showed 1.451 GB of images with
+  1.212 GB (83%) reclaimable.
 
 
 ## Client trust (one time per device)

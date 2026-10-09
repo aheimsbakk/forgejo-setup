@@ -1,0 +1,6 @@
+[Unit]
+Description=Forgejo Docker disk cleanup (unused images, stopped containers)
+
+[Service]
+Type=oneshot
+ExecStart=/opt/forgejo/cleanup.sh

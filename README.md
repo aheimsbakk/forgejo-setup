@@ -14,6 +14,8 @@ What it gives you:
   connects trusts it once
 - A daily full backup (database, repositories, config) that keeps the
   7 newest restore points
+- A daily disk cleanup that removes container images and stopped
+  containers unused for a week
 - A step-by-step install recipe you can rerun on any fresh Debian 13
   machine with nothing but an SSH key and an IP
 
@@ -87,6 +89,27 @@ they would run the contributor's code on your machine.
   `/srv/forgejo-certs`. A restore needs a new certificate and new pins.
 - Restore steps: see the "Backup" section of
   `docs/forgejo-operations.md`.
+
+## Disk space
+
+CI pulls a new image per workflow, so the machine tidies up after
+itself:
+
+- A cleanup run happens daily at 04:15 UTC. It removes images no
+  container has used for 7 days, containers outside the Forgejo stack
+  that have been stopped for 7 days, unused networks, and build cache
+  older than 7 days.
+- Volumes are never removed, and the Forgejo and runner images named in
+  the compose file are never removed.
+- Run it by hand and read what it did:
+  ```bash
+  ssh -i <key> root@<target-ip> 'systemctl start forgejo-cleanup.service'
+  ssh -i <key> root@<target-ip> 'journalctl -u forgejo-cleanup.service -n 40'
+  ```
+- See what Docker holds at any time:
+  ```bash
+  ssh -i <key> root@<target-ip> 'docker system df'
+  ```
 
 ## Configuration
 

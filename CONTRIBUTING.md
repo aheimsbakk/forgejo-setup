@@ -46,6 +46,33 @@ downtime. Copy both to `/etc/systemd/system/` on the target, then:
 systemctl daemon-reload && systemctl enable --now forgejo-backup.timer
 ```
 
+### `forgejo/cleanup.sh`
+
+Removes unused container images, stopped containers outside the compose
+stack, unused networks and the build cache. An image is removed only
+after 7 days with no container referencing it; that grace record lives
+in `/var/lib/forgejo-cleanup/unused-images.tsv`. Volumes are never
+touched, and the images named in the compose file are never removed.
+Deploy to `/opt/forgejo/cleanup.sh` (mode 755). No arguments. Run
+manually and read the log:
+
+```bash
+ssh -i <key> root@<ip> 'systemctl start forgejo-cleanup.service'
+ssh -i <key> root@<ip> 'journalctl -u forgejo-cleanup.service -n 40'
+```
+
+The first run deletes nothing; it only starts the grace record.
+
+### `forgejo/forgejo-cleanup.service` and `forgejo/forgejo-cleanup.timer`
+
+systemd units that run `cleanup.sh` daily at 04:15 UTC — after the
+03:30 backup — and catch up after downtime. Copy both to
+`/etc/systemd/system/` on the target, then:
+
+```bash
+systemctl daemon-reload && systemctl enable --now forgejo-cleanup.timer
+```
+
 ### `forgejo/gen-cert.sh`
 
 Creates the self-signed TLS certificate Forgejo serves:
