@@ -1,0 +1,64 @@
+# Forgejo, LAN-only HTTP. All Forgejo configuration lives here as
+# FORGEJO__* environment variables. See docs/forgejo-install-recipe.md.
+# LAN_IP comes from the .env file next to this compose file.
+services:
+  forgejo:
+    # Pinned stable release. Bump deliberately; never use :latest.
+    image: codeberg.org/forgejo/forgejo:16.0.5
+    container_name: forgejo
+    restart: unless-stopped
+    ports:
+      # Bound to the LAN IPv4 address only. The host also has a public
+      # IPv6 address; binding 0.0.0.0 or [::] would expose Forgejo there.
+      - "${LAN_IP}:80:3000"    # web UI, plain HTTP
+      - "${LAN_IP}:2222:2222"  # git over SSH (host sshd keeps port 22)
+    environment:
+      # Match the owner of the /srv/forgejo bind mount on the host.
+      - USER_UID=1000
+      - USER_GID=1000
+      # Database: built-in SQLite inside the data volume.
+      - FORGEJO__database__DB_TYPE=sqlite3
+      # Web addressing.
+      - FORGEJO__server__DOMAIN=${LAN_IP}
+      - FORGEJO__server__ROOT_URL=http://${LAN_IP}/
+      - FORGEJO__server__HTTP_PORT=3000
+      # Git-over-SSH: Forgejo runs its own SSH server. It must not bind
+      # port 22 inside the container because the image's OpenSSH daemon
+      # already uses it. Listen on 2222, published unchanged on the host.
+      - FORGEJO__server__START_SSH_SERVER=true
+      - FORGEJO__server__SSH_PORT=2222
+      - FORGEJO__server__SSH_LISTEN_PORT=2222
+      # Skip the web install wizard; config is fully defined here.
+      - FORGEJO__security__INSTALL_LOCK=true
+      # LAN instance: accounts are created by the admin via CLI.
+      - FORGEJO__service__DISABLE_REGISTRATION=true
+    volumes:
+      - /srv/forgejo:/data
+      - /etc/timezone:/etc/timezone:ro
+      - /etc/localtime:/etc/localtime:ro
+
+  # Forgejo Actions runner, same box (operator decision). Mitigations:
+  # - The Docker socket is mounted for the runner daemon only. Job
+  #   containers started by the runner never receive it.
+  # - No privileged jobs, no docker-in-docker; container images are
+  #   built with buildah inside jobs instead.
+  # - Per-job CPU/memory limits and capacity 2 are set in
+  #   /srv/forgejo-runner/config.yaml (see recipe).
+  # - No published ports: the runner only dials the instance.
+  runner:
+    # Pinned stable release. Bump deliberately; never use :latest.
+    image: data.forgejo.org/forgejo/runner:13.1.0
+    container_name: forgejo-runner
+    restart: unless-stopped
+    # The runner daemon must reach /var/run/docker.sock (root-owned).
+    # Socket access is root-equivalent on the host either way, so the
+    # container runs as root; job containers it starts are unprivileged.
+    user: "0:0"
+    depends_on:
+      - forgejo
+    volumes:
+      - /srv/forgejo-runner:/data
+      - /var/run/docker.sock:/var/run/docker.sock
+      - /etc/timezone:/etc/timezone:ro
+      - /etc/localtime:/etc/localtime:ro
+    command: ["forgejo-runner", "daemon", "--config", "/data/config.yaml"]

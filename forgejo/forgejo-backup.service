@@ -1,0 +1,6 @@
+[Unit]
+Description=Forgejo backup dump (database, repos, config)
+
+[Service]
+Type=oneshot
+ExecStart=/opt/forgejo/backup.sh
