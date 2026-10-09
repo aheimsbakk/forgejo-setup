@@ -37,7 +37,13 @@ script loads `.env` and only prompts for what is missing.
   `codeberg.org/forgejo/forgejo`, pinned to a stable release (16.0.5).
 - Docker engine and Compose come from Debian packages (`docker.io`,
   `docker-compose`); no third-party apt repos.
-- Access: HTTP only, LAN only. No TLS, no domain, no public exposure.
+- Access: HTTPS only, LAN only. No domain, no public exposure. The
+  certificate is self-signed (created on the target by `gen-cert.sh`) and
+  pinned by every client: browsers, git clients, the runner and the job
+  containers. Plain HTTP answers redirects to HTTPS and nothing else.
+- Certificate lives in `/srv/forgejo-certs`, outside the data dir, so
+  `forgejo dump` never contains the private key. Only the `.crt` leaves
+  the machine.
 - Published ports bind to the LAN IPv4 address, never `0.0.0.0`, because
   the host also has a public IPv6 address.
 - Storage: bind mount `/srv/forgejo` on the host to `/data` in the
@@ -67,106 +73,30 @@ script loads `.env` and only prompts for what is missing.
 | 15 | 2026-10-09 | Runner registered with the instance (global registration token, label `docker:docker://debian:bookworm`) | `forgejo-runner generate-config > /srv/forgejo-runner/config.yaml`; `forgejo-runner register --config /data/config.yaml --instance http://<IP>/ --token '<reg-token>' --labels docker:docker://debian:bookworm --no-interactive` (token piped via stdin) | `POST /api/v1/admin/actions/runners` flow cleaned of stale entries; runner listed `idle` |
 | 16 | 2026-10-09 | Runner mitigations in `/srv/forgejo-runner/config.yaml`: `capacity: 2`, job containers limited with `options: "--memory=1g --cpus=1"`, `privileged: false` (default, no dind) | `sed -i` on the two keys; container runs as root only for socket access | `grep -E "capacity|options:" config.yaml`; smoke test below |
 | 17 | 2026-10-09 | CI smoke test: repo `ci-smoke-test` created, workflow pushed (`.forgejo/workflows/smoke.yml`, `runs-on: docker`), then repo deleted | git push over HTTP; `GET /api/v1/repos/<ADMIN_USER>/ci-smoke-test/actions/runs` | run 1 `status: success` |
+| 18 | 2026-10-09 | Self-signed TLS certificate created on the target: `/srv/forgejo-certs/forgejo.{crt,key}`, SAN = LAN IP + `127.0.0.1` + `forgejo.local` + `localhost` + hostname, 1825 days; key mode 600 owned by uid/gid 1000 | copy `forgejo/gen-cert.sh` to `/opt/forgejo/`; `/opt/forgejo/gen-cert.sh` | `openssl x509 -in /srv/forgejo-certs/forgejo.crt -noout -enddate -ext subjectAltName` shows the SAN list and a 2031 expiry |
+| 19 | 2026-10-09 | Forgejo switched to HTTPS: `PROTOCOL=https`, `CERT_FILE`/`KEY_FILE` point at the mounted cert dir, `ROOT_URL=https://<IP>/`, port 443 published, port 80 kept as a redirect (`REDIRECT_OTHER_PORT=true`, `PORT_TO_REDIRECT=80`) | copy updated `forgejo/docker-compose.yml`; `cd /opt/forgejo && docker-compose up -d` | `curl --cacert forgejo.crt https://<IP>/` returns 200; `curl http://<IP>/` returns 307 to the https URL; `ss -tlnp` shows 80, 443 and 2222 on `<IP>` only |
+| 20 | 2026-10-09 | Runner trusts the instance certificate: `/srv/forgejo-certs/forgejo.crt` mounted read-only at `/etc/ssl/certs/forgejo-lan.crt` in the runner container; `insecure` stays `false` | copy updated `forgejo/docker-compose.yml`; `docker-compose up -d` | runner log `declared successfully`; admin runners API lists it `idle` |
+| 21 | 2026-10-09 | Runner registration address switched from `http://` to `https://` in `/srv/forgejo-runner/.runner` (token and runner id kept) | `sed -i` on the `address` field; `docker restart forgejo-runner` | runners API shows `idle`; Forgejo's log shows the runner's `Declare` POST arriving on the https listener directly |
+| 22 | 2026-10-09 | Job containers pinned to the same certificate: `GIT_SSL_CAINFO` added to runner `envs`, cert mounted read-only through `container.options`, and the path added to `valid_volumes` | `sed`/edit of `/srv/forgejo-runner/config.yaml`; `docker restart forgejo-runner` | smoke job logged `GIT_SSL_CAINFO=/etc/ssl/certs/forgejo-lan.crt` and `git ls-remote https://<IP>/…` succeeded |
+| 23 | 2026-10-09 | CI smoke test over HTTPS: repo `ci-smoke-https` (public) with jobs `plain` and `ca-pin` (job image `data.forgejo.org/forgejo/runner:13.1.0`, which has git), then repo deleted | git clone/push over https with `GIT_SSL_CAINFO`; `GET /api/v1/repos/<ADMIN_USER>/ci-smoke-https/actions/runs` | run 5 `success`; jobs 7 and 8 `success` |
 
 Operator-side change (not on the target): the target address was added
 to the operator's `known_hosts` by `StrictHostKeyChecking=accept-new`.
 
-## Verification (first run)
+## Related documents
 
-- `curl http://<IP>/` returns HTTP 200, title
-  `Forgejo: Beyond coding. We forge.`
-- `ss -tlnp`: ports 80 and 2222 listen on `<IP>` only; no `[::]:80` or
-  `[::]:2222` listener, so the public IPv6 address serves nothing.
-- `ssh -p 2222 git@<IP>` reaches the Forgejo SSH server
-  (`Permission denied (publickey)` — expected before any key is added).
-- Container logs clean: SQLite initialized, web listening on 3000, SSH
-  server on 2222, `AppURL(ROOT_URL)` matching the configured address.
-- `getent ahostsv4 forgejo.local` returns the LAN address and
-  `curl http://forgejo.local/` returns 200 (after changes 12–13).
-
-## Footguns found
-
-- The Forgejo image runs its own OpenSSH daemon on port 22 *inside* the
-  container. With `START_SSH_SERVER=true` and `SSH_LISTEN_PORT=22`, the
-  built-in SSH server collides with it and the container crashes
-  (`bind: address already in use`). Fix: `SSH_LISTEN_PORT=2222` and
-  publish `2222:2222`. The compose file in this repo already reflects that.
-- `forgejo dump` refuses to run as root: use
-  `docker exec -u 1000 -w /data forgejo forgejo dump`. Without `-w /data`
-  it tries to write to `/` and gets `permission denied`.
-- `forgejo dump` aborts with `Failed to include repositories` when
-  `/data/git/repositories` does not exist yet (fresh install, no repos).
-  Create it before dumping. The backup script does.
-- The dump file is named `forgejo-dump-<timestamp>.zip`, not `dump-*`.
-- `forgejo admin user create` requires `--email`; without it: `email is
-  not set`. With no mail server, any placeholder address works.
-- Avahi announces every interface by default, including Docker bridges.
-  Without `allow-interfaces=<lan-if>`, `<hostname>.local` can resolve to
-  `172.18.0.1` and connections fail. Pin it to the LAN interface.
-- Runner v13 renamed the register flag: `--token`, not
-  `--registration-token`. `register` also needs an existing config file:
-  run `generate-config` first.
-- The token from `POST /api/v1/admin/actions/runners` (new API) does not
-  work with `forgejo-runner register`. Use the deprecated global token:
-  `GET /api/v1/admin/runners/registration-token`.
-- The runner image runs as uid 1000 and cannot read the root-owned
-  Docker socket. The compose file sets `user: "0:0"` for it.
-- Forgejo 16 has no file-creation API (`/files/...` is 404); push files
-  with git.
-- Failed `forgejo-runner register` attempts can leave runner entries
-  registered on the server. Delete them via
-  `DELETE /api/v1/admin/actions/runners/<id>` before retrying.
-
-## CI runner (same box)
-
-Operator decision: the Actions runner shares the machine with Forgejo.
-Accepted risks and applied mitigations:
-
-- The Docker socket is mounted into the runner container only. Job
-  containers never receive it. Socket access is root-equivalent on the
-  host; this is the main residual risk of the same-box design.
-- No privileged jobs, no docker-in-docker (`privileged: false`).
-  Container images in pipelines are built with buildah inside jobs.
-- Job containers get `--memory=1g --cpus=1`; runner capacity is 2
-  (machine has 2 vCPUs, 4 GB RAM, no swap — do not raise capacity).
-- The runner publishes no ports; it only dials the instance.
-- Recommended but NOT configured: disable or gate workflows from fork
-  pull requests. Only accounts the admin creates can push, so the
-  current exposure is trusted users only.
-- Off-machine copies of `/srv/forgejo-backups` are strongly advised
-  with CI on the box: a compromised job could reach the backups.
-
-## Backup
-
-- Daily at 03:30 UTC via `forgejo-backup.timer` (systemd,
-  `Persistent=true` so a missed run fires at next boot).
-- `forgejo dump` produces one zip per run containing the SQLite
-  database, repositories, config and LFS data — a full restore point.
-- Zips are moved out of the live data dir to `/srv/forgejo-backups`.
-- Retention: exactly the 7 newest dumps; the script deletes the rest.
-- Remote copy of `/srv/forgejo-backups` is planned by the operator and
-  not part of this setup. Same-VM backups survive bad writes, not disk
-  loss.
-
-Restore from a dump:
-
-```bash
-unzip forgejo-dump-<timestamp>.zip -d /tmp/forgejo-restore
-cd /tmp/forgejo-restore
-# restore.sh recreates config, data and database; run it as the
-# container user after stopping the app, then start it again.
-docker-compose -f /opt/forgejo/docker-compose.yml stop forgejo
-docker run --rm -u 1000 -v /srv/forgejo:/data -v /tmp/forgejo-restore:/restore \
-  -w /restore codeberg.org/forgejo/forgejo:16.0.5 ./restore.sh
-docker-compose -f /opt/forgejo/docker-compose.yml start forgejo
-```
-
-Note: the restore procedure is documented but not yet tested end-to-end.
+- `docs/forgejo-operations.md` — what was verified, the problems found,
+  the CI runner and backup setup, and how client devices trust the
+  certificate.
 
 ## Reproduce (full recipe)
 
 Ask the operator for the parameters first. The script prompts for the
 password so it never lands in shell history or this repo.
+
+The change table records the first target's move from HTTP to HTTPS as
+changes 18–23. The compose file in this repo is already HTTPS, so the
+steps below reach that same state on a fresh machine in one pass.
 
 ```bash
 # 0. Collect parameters. Real values live in the gitignored .env at the
@@ -201,12 +131,24 @@ $SSH 'mkdir -p /srv/forgejo /opt/forgejo && chown 1000:1000 /srv/forgejo'
 scp -i $KEY forgejo/docker-compose.yml root@$IP:/opt/forgejo/docker-compose.yml
 printf 'LAN_IP=%s\n' "$IP" | $SSH 'cat > /opt/forgejo/.env && chmod 600 /opt/forgejo/.env'
 
+# 6b. Certificate, before the first start: the compose file points at
+# /srv/forgejo-certs and Forgejo will not start without it. The script
+# reads LAN_IP from the .env written above and is safe to re-run.
+scp -i $KEY forgejo/gen-cert.sh root@$IP:/opt/forgejo/
+$SSH 'chmod 755 /opt/forgejo/gen-cert.sh && /opt/forgejo/gen-cert.sh'
+
 # 7. Start
 $SSH 'cd /opt/forgejo && docker-compose up -d'
 
 # 8. Verify
-curl -s -o /dev/null -w '%{http_code}\n' "http://$IP/"   # expect 200
-$SSH 'ss -tlnp | grep -E ":80 |:2222 "'                  # expect only the LAN IP
+$SSH 'ss -tlnp | grep -E ":80 |:443 |:2222 "'   # expect only the LAN IP
+
+# 8b. Take the public certificate to the operator machine so clients and
+# CI can pin it. The private key never leaves the target.
+mkdir -p tmp/certs && scp -i $KEY root@$IP:/srv/forgejo-certs/forgejo.crt tmp/certs/forgejo.crt
+CA=$PWD/tmp/certs/forgejo.crt
+curl -s --cacert "$CA" -o /dev/null -w 'https: %{http_code}\n' "https://$IP/"          # expect 200
+curl -s -o /dev/null -w 'http: %{http_code} -> %{redirect_url}\n' "http://$IP/"        # expect 307
 
 # 9. Daily backup: script + systemd timer, keep 7 newest dumps
 scp -i $KEY forgejo/backup.sh forgejo/forgejo-backup.service forgejo/forgejo-backup.timer root@$IP:/opt/forgejo/
@@ -236,25 +178,46 @@ scp -i $KEY forgejo/docker-compose.yml root@$IP:/opt/forgejo/docker-compose.yml
 $SSH 'mkdir -p /srv/forgejo-runner'
 
 # 15. Register the runner (deprecated global token is the one that
-# works with forgejo-runner register; pipe it via stdin)
-TOKEN=$(curl -s -u "$ADMIN_USER:$ADMIN_PASSWORD" "http://$IP/api/v1/admin/runners/registration-token" | sed -n 's/.*"token":"\([^"]*\)".*/\1/p')
-printf '%s' "$TOKEN" | $SSH 'read -r T; cd /opt/forgejo && docker-compose run --rm -T runner forgejo-runner generate-config > /srv/forgejo-runner/config.yaml && docker-compose run --rm -T runner forgejo-runner register --config /data/config.yaml --instance http://'"$IP"'/ --token "$T" --labels "docker:docker://debian:bookworm" --no-interactive'
+# works with forgejo-runner register; pipe it via stdin). The instance
+# URL is https: the stored address is what the runner dials later.
+TOKEN=$(curl -s --cacert "$CA" -u "$ADMIN_USER:$ADMIN_PASSWORD" "https://$IP/api/v1/admin/runners/registration-token" | sed -n 's/.*"token":"\([^"]*\)".*/\1/p')
+printf '%s' "$TOKEN" | $SSH 'read -r T; cd /opt/forgejo && docker-compose run --rm -T runner forgejo-runner generate-config > /srv/forgejo-runner/config.yaml && docker-compose run --rm -T runner forgejo-runner register --config /data/config.yaml --instance https://'"$IP"'/ --token "$T" --labels "docker:docker://debian:bookworm" --no-interactive'
 
-# 16. Mitigations: capacity 2, per-job memory/CPU limits, no privileged
-$SSH 'sed -i "s/^  capacity: 1$/  capacity: 2/; s/^  options:$/  options: \"--memory=1g --cpus=1\"/" /srv/forgejo-runner/config.yaml'
+# 16. Runner config: capacity 2, per-job memory/CPU limits plus the
+# certificate mounted into job containers, GIT_SSL_CAINFO for those
+# containers, and the mount allow-list (valid_volumes: [] silently drops
+# the mount).
+$SSH 'sed -i "s|^  capacity: 1$|  capacity: 2|; s|^  options:$|  options: \"--memory=1g --cpus=1 --volume /srv/forgejo-certs/forgejo.crt:/etc/ssl/certs/forgejo-lan.crt:ro\"|; s|^  envs:$|  envs:\n    GIT_SSL_CAINFO: /etc/ssl/certs/forgejo-lan.crt|; s|^  valid_volumes: \[\]$|  valid_volumes:\n    - /srv/forgejo-certs/forgejo.crt|" /srv/forgejo-runner/config.yaml'
 $SSH 'cd /opt/forgejo && docker-compose up -d runner'
 
-# 17. Smoke test: push a workflow, expect a successful run
-curl -s -u "$ADMIN_USER:$ADMIN_PASSWORD" -X POST "http://$IP/api/v1/user/repos" -H "Content-Type: application/json" -d '{"name":"ci-smoke-test","private":true,"auto_init":true,"default_branch":"main"}' >/dev/null
-git clone -q "http://$ADMIN_USER:$ADMIN_PASSWORD@$IP/$ADMIN_USER/ci-smoke-test.git" /tmp/ci-smoke
+# 17. Smoke test over HTTPS: push a workflow, expect a successful run.
+# The job image debian:bookworm has no git, so the pin check runs in the
+# runner image, which is already on the machine and has git.
+# GIT_SSL_CAINFO must be an absolute path; a relative one breaks push.
+curl -s --cacert "$CA" -u "$ADMIN_USER:$ADMIN_PASSWORD" -X POST "https://$IP/api/v1/user/repos" -H "Content-Type: application/json" -d '{"name":"ci-smoke-test","private":false,"auto_init":true,"default_branch":"main"}' >/dev/null
+GIT_SSL_CAINFO="$CA" git clone -q "https://$ADMIN_USER:$ADMIN_PASSWORD@$IP/$ADMIN_USER/ci-smoke-test.git" /tmp/ci-smoke
 mkdir -p /tmp/ci-smoke/.forgejo/workflows
-printf 'name: smoke\non: [push]\njobs:\n  hello:\n    runs-on: docker\n    steps:\n      - run: echo hello\n' > /tmp/ci-smoke/.forgejo/workflows/smoke.yml
-git -C /tmp/ci-smoke add -A && git -C /tmp/ci-smoke -c user.email=ci@test -c user.name=ci commit -qm smoke && git -C /tmp/ci-smoke push -q origin main
-sleep 20 && curl -s -u "$ADMIN_USER:$ADMIN_PASSWORD" "http://$IP/api/v1/repos/$ADMIN_USER/ci-smoke-test/actions/runs" | sed -n 's/.*"status":"\([^"]*\)".*/first run: \1/p'
+cat > /tmp/ci-smoke/.forgejo/workflows/smoke.yml <<YML
+name: smoke
+on: [push]
+jobs:
+  plain:
+    runs-on: docker
+    steps:
+      - run: echo hello
+  ca-pin:
+    runs-on: docker
+    container:
+      image: data.forgejo.org/forgejo/runner:13.1.0
+    steps:
+      - run: |
+          test -f /etc/ssl/certs/forgejo-lan.crt
+          git --version
+          git ls-remote https://$IP/$ADMIN_USER/ci-smoke-test.git >/dev/null
+          echo "git over https with pinned CA ok"
+YML
+git -C /tmp/ci-smoke add -A && git -C /tmp/ci-smoke -c user.email=ci@test -c user.name=ci commit -qm smoke && GIT_SSL_CAINFO="$CA" git -C /tmp/ci-smoke push -q origin main
+sleep 30 && curl -s --cacert "$CA" -u "$ADMIN_USER:$ADMIN_PASSWORD" "https://$IP/api/v1/repos/$ADMIN_USER/ci-smoke-test/actions/runs" | sed -n 's/.*"status":"\([^"]*\)".*/first run: \1/p'
 # clean up afterwards: DELETE /api/v1/repos/$ADMIN_USER/ci-smoke-test
 ```
 
-## Pending
-
-- Remote copy of `/srv/forgejo-backups` (operator will set up).
-- Test the restore procedure end-to-end on a scratch machine.
