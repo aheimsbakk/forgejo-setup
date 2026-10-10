@@ -75,8 +75,9 @@ configuration files deployed to a target machine.
 - Backup state: at most 7 dump files; trimming is part of every backup
   run.
 - Runner registration state: stored in the runner data directory on the
-  host and in the instance database. It also records the instance
-  address, so its scheme must match what the instance serves.
+  host and in the instance database. It also records the instance URL,
+  so its scheme and host must match what the instance serves; it holds
+  the canonical name.
 - Container name mapping: the service definition pins the instance name
   to the LAN address taken from the parameter store, and the runner's
   job-container settings hold a separate copy of that pair. The copy
@@ -94,12 +95,16 @@ configuration files deployed to a target machine.
   steps follow every change.
 - Service configuration: application settings are expressed only as
   environment-style variables in the service definition; the LAN
-  address is the single injected variable. TLS settings point at the
-  certificate directory; the plain HTTP listener only redirects to
-  HTTPS. The runner and its job containers receive a read-only copy of
-  the certificate and are told to trust it. The service definition and
-  the job-container settings both map the instance name to the LAN
-  address, so the name resolves where multicast discovery cannot reach.
+  address is the single injected variable. The canonical web address is
+  the LAN name: the instance declares itself by name, so clients that
+  reach it by name get no mismatch warning. The LAN address still
+  serves content and git, but is not canonical. TLS settings point at
+  the certificate directory; the plain HTTP listener only redirects to
+  the canonical HTTPS URL. The runner and its job containers receive a
+  read-only copy of the certificate and are told to trust it. The
+  service definition and the job-container settings both map the
+  instance name to the LAN address, so the name resolves where
+  multicast discovery cannot reach.
 - Certificate contract: one run leaves a private key and a certificate
   in the certificate directory. The certificate names the LAN address,
   the LAN name and the loopback names in its subject alternative names,
@@ -136,9 +141,10 @@ configuration files deployed to a target machine.
 
 - SSH (root) to the target; key-based only.
 - HTTPS on the LAN address for the web UI, git-over-HTTP and the
-  administration API. The certificate is self-signed; every client pins
-  it.
-- HTTP on the LAN address answers redirects to HTTPS and nothing else.
+  administration API, canonically addressed by the LAN name. The
+  certificate is self-signed; every client pins it.
+- HTTP on the LAN address answers redirects to the canonical HTTPS URL
+  and nothing else.
 - Distribution package repositories for the container engine, Compose,
   and mDNS packages.
 - Official container images for the application and the runner, pinned
