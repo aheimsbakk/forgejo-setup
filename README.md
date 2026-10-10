@@ -60,11 +60,12 @@ privileged jobs are not available.
 - The instance certificate is already inside job containers at
   `/etc/ssl/certs/forgejo-lan.crt`, and `GIT_SSL_CAINFO` points there,
   so `git` over HTTPS works in jobs without extra setup.
-- Inside workflows, address the instance by its LAN address;
-  `forgejo.local` does not resolve reliably in job containers. Most
-  command-line tools already trust the certificate from that directory;
-  Node and Python `requests` need their own variable — see "Access from
-  job containers" in `docs/forgejo-operations.md`.
+- Inside workflows both `https://<target-ip>/` and
+  `https://forgejo.local/` work: the runner writes the name into every
+  job container's hosts file. Most command-line tools already trust the
+  certificate from that directory, and `NODE_EXTRA_CA_CERTS` is set for
+  every job; Python `requests` still needs its own variable — see
+  "Access from job containers" in `docs/forgejo-operations.md`.
 - The default job image (`debian:bookworm`) has no git. Pick an image
   that has it when a job needs git.
 - Actions published on other forges are downloaded by the runner, and
@@ -115,6 +116,11 @@ itself:
 
 - The only per-machine setting is the LAN address, in
   `/opt/forgejo/.env` on the instance (`LAN_IP=<your-lan-ip>`).
+- The runner repeats that address in
+  `/srv/forgejo-runner/config.yaml` (`--add-host=forgejo.local:<ip>`),
+  which is how job containers resolve the name. Change both when the
+  address changes; the compose file derives its own pin from `LAN_IP`, so
+  it follows automatically.
 - All other Forgejo settings live in `/opt/forgejo/docker-compose.yml`
   as `FORGEJO__*` variables. After editing:
   ```bash

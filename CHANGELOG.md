@@ -1,5 +1,28 @@
 # Changelog
 
+## [0.3.1] - 2026-10-10
+
+- **why:** Inside containers the instance name resolved to the wrong address, so workflows had to use the LAN IP. The reproduce procedure also lacked checks that would catch a silent config failure.
+- **model:** kompis/qwen3.8-flash-next-iq3_s
+- **tags:** forgejo, actions, dns, tls, runner
+
+### Fixed
+
+- `forgejo.local` resolves inside job containers: `--add-host=forgejo.local:<LAN_IP>` in the runner's `container.options` writes the name into each container's `/etc/hosts`, which the resolver reads before DNS
+- Recipe step 16 now checks its own edits (step 16b). Its `sed` patterns match the generated defaults and do nothing, without failing, when `generate-config` output changes
+
+### Added
+
+- `extra_hosts: forgejo.local:<LAN_IP>` on both compose services, so the app and runner containers stop getting the host resolver's synthetic answer that lists the Docker bridge addresses
+- `NODE_EXTRA_CA_CERTS` in the runner's `container.envs`, so Node in job containers trusts the instance with no per-workflow setup. Verified additive: public HTTPS still verifies
+- Recipe smoke test (step 17) addresses the instance by name in the `ca-pin` job and adds a `node-trust` job
+- `docs/forgejo-operations-verification.md`: verification results moved out of `docs/forgejo-operations.md`
+
+### Changed
+
+- Recipe step 12 comment corrected: the Avahi interface pin covers host-side announcement, not container lookups
+- Decisions records that `forgejo.local` is coupled across the hostname, the certificate SAN list, the compose `extra_hosts` pin, and the runner `--add-host` option
+
 ## [0.3.0] - 2026-10-09
 
 - **why:** CI pulls a new container image per workflow and crashed jobs leave stopped containers behind, so `/var/lib/docker` grew with nothing to reclaim it.

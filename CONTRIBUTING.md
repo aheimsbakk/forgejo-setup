@@ -7,8 +7,10 @@ Developer guide for this repo. User-facing product notes are in
 
 - `docs/forgejo-install-recipe.md` — the recipe: every change applied to
   a target machine, in order, with commands and verification.
-- `docs/forgejo-operations.md` — verification results, problems found,
-  runner and backup setup, and how client devices trust the certificate.
+- `docs/forgejo-operations.md` — problems found, runner and backup setup,
+  and how client devices trust the certificate.
+- `docs/forgejo-operations-verification.md` — measured results for each
+  change set: the commands run and what they returned.
 - `forgejo/` — files deployed to a target machine under `/opt/forgejo/`.
 - `.env` — real parameters (`IP`, `ADMIN_USER`, `ADMIN_PASSWORD`, `KEY`)
   for the current deployment. Gitignored, mode 600. Never commit it.
@@ -99,9 +101,11 @@ Forgejo service definition; all Forgejo config is in the compose file as
 `CERT_FILE`, `KEY_FILE`, `REDIRECT_OTHER_PORT`). It also defines the
 Actions runner service (socket mount for the runner daemon only,
 `user: "0:0"`, no published ports, instance certificate mounted into
-`/etc/ssl/certs`). Copy the compose file to `/opt/forgejo/` and create
-`/opt/forgejo/.env` from `.env.example` (set `LAN_IP`, mode 600).
-Runner registration and mitigation steps are in the recipe.
+`/etc/ssl/certs`). Both services pin `forgejo.local` to `LAN_IP` with
+`extra_hosts`, because the host resolver otherwise answers the name with
+every address on the machine. Copy the compose file to `/opt/forgejo/`
+and create `/opt/forgejo/.env` from `.env.example` (set `LAN_IP`, mode
+600). Runner registration and mitigation steps are in the recipe.
 
 ## Conventions
 

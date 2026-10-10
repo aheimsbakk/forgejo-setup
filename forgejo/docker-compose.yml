@@ -9,6 +9,13 @@ services:
     image: codeberg.org/forgejo/forgejo:16.0.5
     container_name: forgejo
     restart: unless-stopped
+    # Pin the instance name to the LAN address. On a user-defined network
+    # the host resolver answers <hostname>.local synthetically with every
+    # address of the machine, Docker bridge gateways included, so a
+    # lookup can return 172.18.0.1 instead of the LAN address. The
+    # hostname is set by the recipe (change 1), so the name is fixed.
+    extra_hosts:
+      - "forgejo.local:${LAN_IP}"
     ports:
       # Bound to the LAN IPv4 address only. The host also has a public
       # IPv6 address; binding 0.0.0.0 or [::] would expose Forgejo there.
@@ -72,6 +79,12 @@ services:
     user: "0:0"
     depends_on:
       - forgejo
+    # Same pin as the app service: without it the daemon resolves
+    # forgejo.local to every address on the machine. The daemon dials the
+    # address stored in .runner, so this only removes a wrong-answer
+    # hazard; job containers get the pin from container.options instead.
+    extra_hosts:
+      - "forgejo.local:${LAN_IP}"
     volumes:
       - /srv/forgejo-runner:/data
       - /var/run/docker.sock:/var/run/docker.sock

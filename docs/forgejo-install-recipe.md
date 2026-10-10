@@ -51,6 +51,10 @@ script loads `.env` and only prompts for what is missing.
 - All Forgejo configuration lives in `forgejo/docker-compose.yml` as
   `FORGEJO__*` environment variables. The LAN IP is the only variable,
   supplied by `/opt/forgejo/.env`.
+- The hostname is `forgejo`, so the mDNS name is `forgejo.local`. That
+  name appears in four places: the hostname, the certificate subject
+  alternative names, the compose `extra_hosts` pin, and the runner's
+  `--add-host` option. A different hostname means changing all four.
 - Container disk use is bounded by a daily cleanup job: images unused
   for 7 days, stopped containers outside the compose stack, unused
   networks and the build cache. Volumes are never removed, and the
@@ -86,15 +90,19 @@ script loads `.env` and only prompts for what is missing.
 | 24 | 2026-10-09 | Daily disk cleanup script deployed (7-day grace for unused images, stack images protected from the compose file) | copy `forgejo/cleanup.sh` to `/opt/forgejo/` (mode 755) | first run exit 0, deleted nothing, wrote a grace record for the 2 unused job images |
 | 25 | 2026-10-09 | Cleanup timer installed and enabled (04:15 UTC, catches up after downtime) | copy `forgejo-cleanup.service` + `forgejo-cleanup.timer` to `/etc/systemd/system/`; `systemctl daemon-reload && systemctl enable --now forgejo-cleanup.timer` | `systemctl list-timers` shows next run `Sat 2026-10-10 04:15 UTC` |
 | 26 | 2026-10-09 | Removal paths proved with throwaway objects | `docker create --name cleanup-probe debian:bookworm true`; empty tar imported as `cleanup-probe:scratch`; grace date back-dated in `/var/lib/forgejo-cleanup/unused-images.tsv`; `systemctl start forgejo-cleanup.service` | both probes removed in one run; stack images, running containers, `forgejo_default` network and the two job images inside grace untouched |
+| 27 | 2026-10-10 | Job containers can resolve `forgejo.local`: `--add-host=forgejo.local:<IP>` added to the runner's `container.options`, so the name lands in every job container's `/etc/hosts` | `sed -i` on the `options` key of `/srv/forgejo-runner/config.yaml`; `docker restart forgejo-runner` | CI run 15 `success`: `getent ahostsv4 forgejo.local` returned `<IP>` inside the job, `git ls-remote https://forgejo.local/...` succeeded, and a `node:20-bookworm` job read `/api/v1/version` by name; without the option the lookup also returns the Docker bridge addresses `172.18.0.1` and `172.17.0.1` |
+| 28 | 2026-10-10 | Instance name pinned in the app and runner containers too: `extra_hosts: forgejo.local:<IP>` on both compose services | copy updated `forgejo/docker-compose.yml`; `cd /opt/forgejo && docker-compose up -d` | `docker exec forgejo getent ahostsv4 forgejo.local`, and the same in `forgejo-runner`, return the LAN address alone instead of three addresses; `curl --cacert forgejo.crt https://<IP>/` returns 200; runner log `declared successfully` |
+| 29 | 2026-10-10 | Node trusts the instance in job containers with no per-workflow setup: `NODE_EXTRA_CA_CERTS` added to the runner's `container.envs` | `sed -i` on the `envs` block of `/srv/forgejo-runner/config.yaml`; `docker restart forgejo-runner` | CI run 16 `success`: a job logged `NODE_EXTRA_CA_CERTS=/etc/ssl/certs/forgejo-lan.crt` without setting it in the workflow and fetched `https://forgejo.local/api/v1/version`; another job read `https://registry.npmjs.org/` with status 200, so public trust is intact; `git ls-remote` by name still ok |
 
 Operator-side change (not on the target): the target address was added
 to the operator's `known_hosts` by `StrictHostKeyChecking=accept-new`.
 
 ## Related documents
 
-- `docs/forgejo-operations.md` — what was verified, the problems found,
-  the CI runner and backup setup, and how client devices trust the
-  certificate.
+- `docs/forgejo-operations.md` — the problems found, the CI runner and
+  backup setup, and how client devices trust the certificate.
+- `docs/forgejo-operations-verification.md` — what each change set was
+  checked against, with the observed output.
 
 ## Reproduce (full recipe)
 
@@ -172,7 +180,10 @@ printf '%s\n%s\n' "$ADMIN_USER" "$ADMIN_PASS" |
 
 # 12. mDNS LAN discovery: libnss-mdns resolves .local names,
 # avahi-daemon announces <hostname>.local. Restrict avahi to the LAN
-# interface, or it also advertises Docker bridge addresses.
+# interface so the machine is not announced on Docker bridges. This
+# covers host-side lookups only: containers get their own answers from
+# the host resolver, which lists every address of the machine (see
+# step 16 and change 27).
 $SSH 'apt-get install -y libnss-mdns avahi-daemon'
 $SSH 'DEV=$(ip -o route get '"$IP"' | sed -n "s/.* dev \([^ ]*\).*/\1/p"); sed -i "/^\[server\]/a allow-interfaces=$DEV" /etc/avahi/avahi-daemon.conf && systemctl restart avahi-daemon'
 
@@ -191,15 +202,26 @@ TOKEN=$(curl -s --cacert "$CA" -u "$ADMIN_USER:$ADMIN_PASSWORD" "https://$IP/api
 printf '%s' "$TOKEN" | $SSH 'read -r T; cd /opt/forgejo && docker-compose run --rm -T runner forgejo-runner generate-config > /srv/forgejo-runner/config.yaml && docker-compose run --rm -T runner forgejo-runner register --config /data/config.yaml --instance https://'"$IP"'/ --token "$T" --labels "docker:docker://debian:bookworm" --no-interactive'
 
 # 16. Runner config: capacity 2, per-job memory/CPU limits plus the
-# certificate mounted into job containers, GIT_SSL_CAINFO for those
-# containers, and the mount allow-list (valid_volumes: [] silently drops
+# certificate mounted into job containers, GIT_SSL_CAINFO and
+# NODE_EXTRA_CA_CERTS for those containers, the LAN name written into
+# every job container's hosts file (containers get the host resolver's
+# synthetic answer for .local, which lists every address of the
+# machine), and the mount allow-list (valid_volumes: [] silently drops
 # the mount).
-$SSH 'sed -i "s|^  capacity: 1$|  capacity: 2|; s|^  options:$|  options: \"--memory=1g --cpus=1 --volume /srv/forgejo-certs/forgejo.crt:/etc/ssl/certs/forgejo-lan.crt:ro\"|; s|^  envs:$|  envs:\n    GIT_SSL_CAINFO: /etc/ssl/certs/forgejo-lan.crt|; s|^  valid_volumes: \[\]$|  valid_volumes:\n    - /srv/forgejo-certs/forgejo.crt|" /srv/forgejo-runner/config.yaml'
+$SSH 'sed -i "s|^  capacity: 1$|  capacity: 2|; s|^  options:$|  options: \"--memory=1g --cpus=1 --volume /srv/forgejo-certs/forgejo.crt:/etc/ssl/certs/forgejo-lan.crt:ro --add-host=forgejo.local:'"$IP"'\"|; s|^  envs:$|  envs:\n    GIT_SSL_CAINFO: /etc/ssl/certs/forgejo-lan.crt\n    NODE_EXTRA_CA_CERTS: /etc/ssl/certs/forgejo-lan.crt|; s|^  valid_volumes: \[\]$|  valid_volumes:\n    - /srv/forgejo-certs/forgejo.crt|" /srv/forgejo-runner/config.yaml'
 $SSH 'cd /opt/forgejo && docker-compose up -d runner'
+
+# 16b. Verify the edits landed. The seds in step 16 match the generated
+# defaults: if a runner version changes generate-config output, they do
+# nothing and report nothing. Expect 4, and one address per lookup.
+$SSH 'grep -cE "^  capacity: 2$|add-host=forgejo.local|NODE_EXTRA_CA_CERTS:|^  valid_volumes:" /srv/forgejo-runner/config.yaml'
+$SSH 'docker exec forgejo getent ahostsv4 forgejo.local; docker exec forgejo-runner getent ahostsv4 forgejo.local'
 
 # 17. Smoke test over HTTPS: push a workflow, expect a successful run.
 # The job image debian:bookworm has no git, so the pin check runs in the
-# runner image, which is already on the machine and has git.
+# runner image, which is already on the machine and has git. The ca-pin
+# and node-trust jobs also prove the name pin and the inherited Node CA
+# variable (changes 27-29): both address the instance by name.
 # GIT_SSL_CAINFO must be an absolute path; a relative one breaks push.
 curl -s --cacert "$CA" -u "$ADMIN_USER:$ADMIN_PASSWORD" -X POST "https://$IP/api/v1/user/repos" -H "Content-Type: application/json" -d '{"name":"ci-smoke-test","private":false,"auto_init":true,"default_branch":"main"}' >/dev/null
 GIT_SSL_CAINFO="$CA" git clone -q "https://$ADMIN_USER:$ADMIN_PASSWORD@$IP/$ADMIN_USER/ci-smoke-test.git" /tmp/ci-smoke
@@ -220,8 +242,16 @@ jobs:
       - run: |
           test -f /etc/ssl/certs/forgejo-lan.crt
           git --version
-          git ls-remote https://$IP/$ADMIN_USER/ci-smoke-test.git >/dev/null
-          echo "git over https with pinned CA ok"
+          getent ahostsv4 forgejo.local
+          git ls-remote https://forgejo.local/$ADMIN_USER/ci-smoke-test.git >/dev/null
+          echo "git over https by name with pinned CA ok"
+  node-trust:
+    runs-on: docker
+    container:
+      image: node:20-bookworm
+    steps:
+      - run: |
+          node -e 'fetch("https://forgejo.local/api/v1/version").then(r => r.text()).then(t => console.log("node by name ok", t.trim())).catch(e => { console.error("FAIL", e.cause ? e.cause.code : e.message); process.exit(1); })'
 YML
 git -C /tmp/ci-smoke add -A && git -C /tmp/ci-smoke -c user.email=ci@test -c user.name=ci commit -qm smoke && GIT_SSL_CAINFO="$CA" git -C /tmp/ci-smoke push -q origin main
 sleep 30 && curl -s --cacert "$CA" -u "$ADMIN_USER:$ADMIN_PASSWORD" "https://$IP/api/v1/repos/$ADMIN_USER/ci-smoke-test/actions/runs" | sed -n 's/.*"status":"\([^"]*\)".*/first run: \1/p'
