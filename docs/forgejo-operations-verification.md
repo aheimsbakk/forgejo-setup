@@ -122,3 +122,64 @@ them. The problems found while reaching these results are in
   with email `robot@forgejo.local`. `.local` is reserved for mDNS and
   should not appear in addresses; changing that account's email is the
   operator's call, not part of this change.
+
+## Actions served by the instance (change 32)
+
+- `app.ini` after the recreate: `[actions] DEFAULT_ACTIONS_URL = self`.
+- Smoke workflow with `uses: actions/checkout@v4` against the mirrored
+  public repo `actions/checkout` (anonymous `info/refs` request: 200):
+  the job log shows `git clone 'https://forgejo.local/actions/checkout'
+  # ref=v4` — the relative reference resolves to the instance.
+- First attempt failed on runner-side trust: the Go daemon trusts the
+  loose certificate in `/etc/ssl/certs`, but the runner's git (OpenSSL)
+  reads the `ca-certificates.crt` bundle and reported `SSL certificate
+  OpenSSL verify result: self-signed certificate (18)`. The runner
+  image is Alpine without `update-ca-certificates`; the compose command
+  now builds a merged bundle at start (120 certificates including the
+  instance) and `GIT_SSL_CAINFO` points at it.
+- Second attempt failed for an unrelated reason: `actions/checkout@v4`
+  is a JavaScript action and the job image
+  `data.forgejo.org/forgejo/runner:13.1.0` has no node
+  (`exec: "node": executable file not found`). With `node:20-bookworm`
+  (node + git) the run is `success`.
+- The action cache holds bare clones with the old remote: before the
+  change `/srv/forgejo-runner/.cache/act/*/*/config` pointed at
+  `https://data.forgejo.org/actions/checkout`. After clearing the cache
+  the new clone's remote is `https://forgejo.local/actions/checkout`.
+- Runner after the recreate: `declared successfully`, runners API
+  `idle`. Smoke repo `ci-actions-self` deleted afterwards; the throwaway
+  push tooling under `/opt/ci-self` (including its credential file) was
+  removed in the same session.
+
+## Default job image node:20-bookworm (change 33)
+
+- `/srv/forgejo-runner/.runner` label now `docker:docker://node:20-bookworm`;
+  runner id and token unchanged, log `declared successfully` after the
+  restart.
+- Smoke workflow with `runs-on: docker` and no `container.image`: run
+  21 `success`, job log shows `Start image=node:20-bookworm`,
+  `actions/checkout@v4` ran with `git version 2.39.5`, and
+  `node --version` printed `v20.20.2`.
+- Side effect: `debian:bookworm` is now unused; the daily cleanup
+  removes it after its 7-day grace period, as designed.
+- Smoke repo `ci-default-image` and the `/opt/ci-self` push tooling
+  deleted afterwards.
+
+## Default job image on the Active LTS line (change 34)
+
+- `/srv/forgejo-runner/.runner` label now `docker:docker://node:24-bookworm`;
+  runner id and token unchanged, log `declared successfully` after the
+  restart.
+- Smoke workflow with `runs-on: docker` and no `container.image`: run
+  22 `success`, job log shows `Start image=node:24-bookworm`,
+  `node --version` printed `v24.21.0`, and `actions/checkout@v4` ran
+  with `git version 2.39.5`. The image pull (1.14 GB) happened inside
+  the job.
+- Why: Node 20 reached end-of-life 2026-04-30; `node:20-bookworm` is
+  frozen at 20.20.2 and receives no security fixes. Node 24 is the
+  Active LTS line at this date (Maintenance from 2026-10-20, supported
+  to 2028-04-30).
+- `node:20-bookworm` (1.1 GB) is now unused; the daily cleanup reclaims
+  it after its 7-day grace period.
+- Smoke repo `ci-lts-image` and the `/opt/ci-self` push tooling deleted
+  afterwards.

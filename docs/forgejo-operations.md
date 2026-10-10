@@ -68,8 +68,12 @@ certificate. The measured results behind each change set are in
   file still holds an `http://` address keeps working — at the cost of
   one redirect per request. Switch the address instead of relying on it.
 - The `debian:bookworm` job image has no git. A job that runs git needs
-  an image that has it; `data.forgejo.org/forgejo/runner:13.1.0` is
-  already on the machine and carries git 2.54.
+  an image that has it. Change 33 made the default `node:20-bookworm`
+  and change 34 moved it to `node:24-bookworm` (Node 20 went
+  end-of-life 2026-04-30; its image is frozen and gets no security
+  fixes). The default lives in the runner's registration file
+  `/srv/forgejo-runner/.runner`, not in `config.yaml`. When picking an
+  image line, check its support status first.
 - A `run:` step written as one unquoted scalar containing `: ` (for
   example `echo "… CA: ok"`) breaks workflow parsing. The run then shows
   a single failed job named after the commit message, with
@@ -112,6 +116,18 @@ certificate. The measured results behind each change set are in
   browsing by the other host always shows the banner. Change 30 makes
   the mDNS name canonical; the address still serves content and git,
   browsers just see the warning there.
+- The runner's Go client and the runner's git have different trust
+  stores. The Go daemon trusts the loose certificate in
+  `/etc/ssl/certs`; git (OpenSSL) reads the `ca-certificates.crt`
+  bundle and rejects the instance with `SSL certificate OpenSSL verify
+  result: self-signed certificate (18)`. That matters because the
+  runner downloads workflow actions with git. The runner image is
+  Alpine without `update-ca-certificates`, so the compose command
+  builds a merged bundle (public CAs + instance certificate) at every
+  start and `GIT_SSL_CAINFO` points at it.
+- The runner's action cache (`/srv/forgejo-runner/.cache/act`) is not
+  invalidated when `DEFAULT_ACTIONS_URL` changes: cached clones keep
+  the old remote. Delete the directory after changing the setting.
 
 ## CI runner (same box)
 
@@ -183,6 +199,29 @@ for git.
   `apt-get install` worked inside a job.
 - Host paths other than the certificate are not mountable: the runner
   only allows what `valid_volumes` lists.
+
+## Workflow actions (mirrored on the instance)
+
+- Since change 32 `DEFAULT_ACTIONS_URL=self`: a reference without a
+  host, e.g. `uses: actions/checkout@v4`, is cloned from
+  `https://forgejo.local/actions/checkout`. Every action a workflow
+  uses must exist as a repository on the instance; the operator keeps
+  the mirrors (e.g. the `actions` organization). The mirror must be
+  public: the runner clones actions anonymously.
+- A full URL in `uses:` (`uses: https://github.com/owner/repo@v4`)
+  bypasses the setting. It still verifies: the runner's git bundle
+  keeps the public CAs next to the instance certificate.
+- The runner downloads actions with git inside the runner container.
+  That container's `GIT_SSL_CAINFO` points at a merged bundle (public
+  CAs + instance certificate) built at every start; the loose file in
+  `/etc/ssl/certs` only covers the Go daemon.
+- Changing `DEFAULT_ACTIONS_URL` does not invalidate
+  `/srv/forgejo-runner/.cache`: delete it afterwards, or cached clones
+  keep pointing at the previous host.
+- JavaScript actions (e.g. `actions/checkout@v4`) need `node` in the
+  job image, and git for the checkout itself. Since changes 33-34 the
+  default image `node:24-bookworm` has both, so `runs-on: docker`
+  needs no per-workflow image choice for them.
 
 ## Backup
 

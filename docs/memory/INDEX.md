@@ -13,3 +13,6 @@
 | Containers and <hostname>.local: two failure modes, one fix | warning | medium | forgejo, actions, dns, job-containers, runner | | archive/2026-10-10-containers-hostname-local-two-failure-modes.md |
 | Forgejo URL mismatch banner is client-side; canonical URL is the name | warning | medium | forgejo, root-url, dns, verification, banner | | archive/2026-10-10-canonical-url-banner-is-client-side.md |
 | Email placeholders: use .invalid, never .local | warning | low | forgejo, email, mdns, rfc6761 | | archive/2026-10-10-email-placeholder-invalid-not-local.md |
+| Runner git and Go have separate trust stores; merged CA bundle at start | warning | high | forgejo, actions, runner, tls, ca-bundle | | archive/2026-10-10-runner-git-vs-go-trust.md |
+| DEFAULT_ACTIONS_URL=self: mirrored public repos, cache and node gotchas | decision | medium | forgejo, actions, mirror, runner-cache, node | | archive/2026-10-10-default-actions-url-self.md |
+| Default job image is node:24-bookworm; the label lives in .runner | decision | medium | forgejo, actions, runner, labels, job-image | | archive/2026-10-10-default-job-image-node-lts.md |

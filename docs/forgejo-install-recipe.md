@@ -67,6 +67,18 @@ script loads `.env` and only prompts for what is missing.
   for 7 days, stopped containers outside the compose stack, unused
   networks and the build cache. Volumes are never removed, and the
   images named by the compose file are never removed.
+- Workflow actions are fetched from the instance itself
+  (`DEFAULT_ACTIONS_URL=self`): a `uses:` reference without a host is
+  cloned from this instance's repositories. The operator mirrors every
+  action a workflow uses into a repository here (e.g. the `actions`
+  organization, public so the runner can clone it anonymously). Full
+  URLs in `uses:` bypass the setting.
+- The default job image is `node:24-bookworm` (runner label
+  `docker:docker://node:24-bookworm`): it has node and git, so
+  mirrored JavaScript actions like `actions/checkout` work without
+  per-workflow image choice. The line is the Active LTS at install
+  time; Node 20 reached end-of-life 2026-04-30 and was replaced by
+  change 34.
 
 ## Changes applied (first run, anonymized)
 
@@ -103,6 +115,9 @@ script loads `.env` and only prompts for what is missing.
 | 29 | 2026-10-10 | Node trusts the instance in job containers with no per-workflow setup: `NODE_EXTRA_CA_CERTS` added to the runner's `container.envs` | `sed -i` on the `envs` block of `/srv/forgejo-runner/config.yaml`; `docker restart forgejo-runner` | CI run 16 `success`: a job logged `NODE_EXTRA_CA_CERTS=/etc/ssl/certs/forgejo-lan.crt` without setting it in the workflow and fetched `https://forgejo.local/api/v1/version`; another job read `https://registry.npmjs.org/` with status 200, so public trust is intact; `git ls-remote` by name still ok |
 | 30 | 2026-10-10 | Canonical URL switched from the address to the name: `DOMAIN=forgejo.local`, `ROOT_URL=https://forgejo.local/` in the compose file; the runner's registered address in `/srv/forgejo-runner/.runner` switched to `https://forgejo.local/` (token and runner id kept) | copy updated `forgejo/docker-compose.yml`; `cd /opt/forgejo && docker-compose up -d`; `sed -i` on the `address` field of `/srv/forgejo-runner/.runner`; `docker restart forgejo-runner` | `curl --cacert forgejo.crt https://forgejo.local/` returns 200 and the page embeds `appUrl: 'https://forgejo.local/'` (the mismatch banner is injected client-side by comparing the browser host with this value, so curl never shows it); `https://<IP>/` still returns 200; `curl http://<IP>/` now redirects to `https://forgejo.local/`; container log shows `AppURL(ROOT_URL): https://forgejo.local/` and `Redirecting: 0.0.0.0:80 to https://forgejo.local`; runner log `declared successfully`, runners API `idle` |
 | 31 | 2026-10-10 | Admin account email placeholder changed from `<ADMIN_USER>@forgejo.lan` to `<ADMIN_USER>@forgejo.invalid`: `.local` is reserved for mDNS (RFC 6762) and must not appear in email addresses; `.invalid` is the RFC 6761 never-deliverable placeholder | `PATCH /api/v1/admin/users/<ADMIN_USER>` with `{"email":"<ADMIN_USER>@forgejo.invalid"}` | `forgejo admin user list` shows the new address |
+| 32 | 2026-10-10 | Actions served by the instance: `DEFAULT_ACTIONS_URL=self` in the compose file; the runner container builds a merged CA bundle (public CAs + instance cert) at start and points `GIT_SSL_CAINFO` at it, so its git verifies the instance when downloading actions; the runner's action cache cleared | copy updated `forgejo/docker-compose.yml`; `cd /opt/forgejo && docker-compose up -d`; `rm -rf /srv/forgejo-runner/.cache` | `app.ini` shows `DEFAULT_ACTIONS_URL = self`; job log shows `git clone 'https://forgejo.local/actions/checkout' # ref=v4`; the cache clone's remote is `https://forgejo.local/actions/checkout`; smoke run `success` with `uses: actions/checkout@v4` against the mirrored `actions/checkout` repo (job image `node:20-bookworm`), repo deleted after |
+| 33 | 2026-10-10 | Default job image switched from `debian:bookworm` to `node:20-bookworm`: the runner's registration label in `/srv/forgejo-runner/.runner` changed to `docker:docker://node:20-bookworm` (runner id and token kept) | `sed -i` on the label line of `/srv/forgejo-runner/.runner`; `docker restart forgejo-runner` | runner log `declared successfully`; smoke run 21 `success` with `runs-on: docker` and no `container.image`: log shows `Start image=node:20-bookworm`, `actions/checkout@v4` ran (git 2.39.5), `node --version` printed `v20.20.2`; repo deleted after |
+| 34 | 2026-10-10 | Default job image moved to the Active LTS line: label `docker:docker://node:24-bookworm` — Node 20 reached end-of-life 2026-04-30, its image is frozen at 20.20.2 and gets no security fixes | `sed -i` on the label line of `/srv/forgejo-runner/.runner`; `docker restart forgejo-runner` | runner log `declared successfully`; smoke run 22 `success`: `Start image=node:24-bookworm`, `node --version` printed `v24.21.0`, `actions/checkout@v4` ran (git 2.39.5); repo deleted after; `node:20-bookworm` now unused and will be reclaimed by the daily cleanup after its grace period |
 
 Operator-side change (not on the target): the target address was added
 to the operator's `known_hosts` by `StrictHostKeyChecking=accept-new`.
@@ -213,7 +228,7 @@ $SSH 'mkdir -p /srv/forgejo-runner'
 # later, and the compose extra_hosts pin resolves the name inside the
 # runner container.
 TOKEN=$(curl -s --cacert "$CA" -u "$ADMIN_USER:$ADMIN_PASSWORD" "https://$IP/api/v1/admin/runners/registration-token" | sed -n 's/.*"token":"\([^"]*\)".*/\1/p')
-printf '%s' "$TOKEN" | $SSH 'read -r T; cd /opt/forgejo && docker-compose run --rm -T runner forgejo-runner generate-config > /srv/forgejo-runner/config.yaml && docker-compose run --rm -T runner forgejo-runner register --config /data/config.yaml --instance https://forgejo.local/ --token "$T" --labels "docker:docker://debian:bookworm" --no-interactive'
+printf '%s' "$TOKEN" | $SSH 'read -r T; cd /opt/forgejo && docker-compose run --rm -T runner forgejo-runner generate-config > /srv/forgejo-runner/config.yaml && docker-compose run --rm -T runner forgejo-runner register --config /data/config.yaml --instance https://forgejo.local/ --token "$T" --labels "docker:docker://node:24-bookworm" --no-interactive'
 
 # 16. Runner config: capacity 2, per-job memory/CPU limits plus the
 # certificate mounted into job containers, GIT_SSL_CAINFO and
@@ -232,10 +247,11 @@ $SSH 'grep -cE "^  capacity: 2$|add-host=forgejo.local|NODE_EXTRA_CA_CERTS:|^  v
 $SSH 'docker exec forgejo getent ahostsv4 forgejo.local; docker exec forgejo-runner getent ahostsv4 forgejo.local'
 
 # 17. Smoke test over HTTPS: push a workflow, expect a successful run.
-# The job image debian:bookworm has no git, so the pin check runs in the
-# runner image, which is already on the machine and has git. The ca-pin
-# and node-trust jobs also prove the name pin and the inherited Node CA
-# variable (changes 27-29): both address the instance by name.
+# The default job image is node:24-bookworm (changes 33-34), which has
+# git and node. The ca-pin job pins the runner image, which also has
+# git, to prove the mount there too; the ca-pin and node-trust jobs
+# also prove the name pin and the inherited Node CA variable (changes
+# 27-29): both address the instance by name.
 # GIT_SSL_CAINFO must be an absolute path; a relative one breaks push.
 curl -s --cacert "$CA" -u "$ADMIN_USER:$ADMIN_PASSWORD" -X POST "https://$IP/api/v1/user/repos" -H "Content-Type: application/json" -d '{"name":"ci-smoke-test","private":false,"auto_init":true,"default_branch":"main"}' >/dev/null
 GIT_SSL_CAINFO="$CA" git clone -q "https://$ADMIN_USER:$ADMIN_PASSWORD@$IP/$ADMIN_USER/ci-smoke-test.git" /tmp/ci-smoke

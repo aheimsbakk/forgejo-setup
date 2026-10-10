@@ -1,5 +1,27 @@
 # Changelog
 
+## [0.4.0] - 2026-10-10
+
+- **why:** Workflows pulled actions from public forges. The operator mirrors every used action on the instance, so relative `uses:` references must resolve locally — and the default job image must be able to run them on a supported Node line.
+- **model:** kompis/qwen3.8-flash-next-iq3_s
+- **tags:** forgejo, actions, runner, tls, job-image
+
+### Added
+
+- `FORGEJO__actions__DEFAULT_ACTIONS_URL=self` in `forgejo/docker-compose.yml`: `uses: actions/checkout@v4` now clones from the instance (recipe change 32). Mirrors must be public repos; full URLs in `uses:` still bypass the setting
+- `docs/forgejo-operations.md`: "Workflow actions (mirrored on the instance)" section — mirror rule, anonymous clone requirement, cache invalidation, node/git needs
+
+### Changed
+
+- The runner container builds a merged CA bundle (public CAs + instance cert) at every start and sets `GIT_SSL_CAINFO`; its git now verifies the instance when downloading actions
+- Default job image: `debian:bookworm` → `node:20-bookworm` (change 33) → `node:24-bookworm` (change 34, Active LTS; Node 20 went end-of-life 2026-04-30). The label lives in `/srv/forgejo-runner/.runner`; reproduce step 15 registers with the new label
+
+### Fixed
+
+- Action clones from the instance failed with `self-signed certificate (18)`: the runner's git (OpenSSL) reads the `ca-certificates.crt` bundle, not the loose file in `/etc/ssl/certs` that only the Go daemon reads
+- Stale action cache after the URL change: `/srv/forgejo-runner/.cache` kept clones pointing at `data.forgejo.org`; cleared, and the gotcha documented
+
+
 ## [0.3.2] - 2026-10-10
 
 - **why:** Browsing `https://forgejo.local/` showed a "configured to be served on …" warning, because `ROOT_URL` named the LAN address. Clients use the name, so the name must be canonical.
