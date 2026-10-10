@@ -17,8 +17,10 @@ Concrete mapping from `BLUEPRINT.md` components to physical files.
 ├── .gitignore                       ignores tmp/, .env
 ├── docs/
 │   ├── forgejo-install-recipe.md    recipe component: change log + reproduce
-│   ├── forgejo-operations.md        verification, footguns, runner, backup,
-│   │                                client certificate trust
+│   ├── forgejo-operations.md        footguns, runner, backup, client
+│   │                                certificate trust
+│   ├── forgejo-operations-verification.md
+│   │                                verification results per change set
 │   └── memory/                      agent session memory (INDEX.md, archive/)
 ├── forgejo/                         service configuration component
 │   ├── docker-compose.yml           Forgejo app + Actions runner definitions
@@ -40,14 +42,14 @@ Concrete mapping from `BLUEPRINT.md` components to physical files.
 
 | Blueprint component | Files |
 |---|---|
-| Recipe | `docs/forgejo-install-recipe.md`, `docs/forgejo-operations.md` |
+| Recipe | `docs/forgejo-install-recipe.md`, `docs/forgejo-operations.md`, `docs/forgejo-operations-verification.md` |
 | Service configuration | `forgejo/docker-compose.yml`, `forgejo/.env.example` |
 | Certificate | `forgejo/gen-cert.sh`; exported copy `tmp/certs/forgejo.crt` (untracked) |
 | Backup | `forgejo/backup.sh`, `forgejo/forgejo-backup.service`, `forgejo/forgejo-backup.timer` |
 | Disk cleanup | `forgejo/cleanup.sh`, `forgejo/forgejo-cleanup.service`, `forgejo/forgejo-cleanup.timer`; grace record `/var/lib/forgejo-cleanup/unused-images.tsv` (on the target, untracked) |
 | Parameter store | `.env` (untracked), `.env.example`, `forgejo/.env.example` |
-| Discovery | recipe change 12–13 (packages + Avahi interface pin) |
-| CI runner | `forgejo/docker-compose.yml` (runner service), recipe changes 14–17 and 20–23 |
+| Discovery | recipe change 12–13 (packages + Avahi interface pin) and change 27 (name mapping for job containers) |
+| CI runner | `forgejo/docker-compose.yml` (runner service), recipe changes 14–17, 20–23 and 27; job settings `/srv/forgejo-runner/config.yaml` (on the target, generated) |
 
 ## Entry points
 

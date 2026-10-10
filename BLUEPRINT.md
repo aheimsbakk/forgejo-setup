@@ -40,7 +40,10 @@ configuration files deployed to a target machine.
   definition is the source of truth for what must be kept.
 - Parameter store component — per-deployment values (address, admin
   account, key path) kept outside version control.
-- Discovery component — LAN name resolution and announcement.
+- Discovery component — LAN name resolution and announcement. Multicast
+  discovery does not reach container workloads, so the reproduce
+  procedure also records the name-to-address mapping in the runner's
+  job-container settings.
 
 ## Data Flow
 
@@ -74,6 +77,10 @@ configuration files deployed to a target machine.
 - Runner registration state: stored in the runner data directory on the
   host and in the instance database. It also records the instance
   address, so its scheme must match what the instance serves.
+- Container name mapping: the service definition pins the instance name
+  to the LAN address taken from the parameter store, and the runner's
+  job-container settings hold a separate copy of that pair. The copy
+  must be updated whenever the address changes.
 - Deployment parameters: one untracked environment file per checkout.
 - Cleanup grace state: one record per currently unused image, holding
   the day it was first seen unused. An image becomes removable only
@@ -90,7 +97,9 @@ configuration files deployed to a target machine.
   address is the single injected variable. TLS settings point at the
   certificate directory; the plain HTTP listener only redirects to
   HTTPS. The runner and its job containers receive a read-only copy of
-  the certificate and are told to trust it.
+  the certificate and are told to trust it. The service definition and
+  the job-container settings both map the instance name to the LAN
+  address, so the name resolves where multicast discovery cannot reach.
 - Certificate contract: one run leaves a private key and a certificate
   in the certificate directory. The certificate names the LAN address,
   the LAN name and the loopback names in its subject alternative names,

@@ -1,62 +1,10 @@
 # Forgejo Operations
 
 Day-2 notes for the instance installed by
-`docs/forgejo-install-recipe.md`: what was verified after each change,
-the problems found, how the Actions runner and the backups are set up,
-and how client devices trust the certificate.
-
-## Verification (first run)
-
-- `curl http://<IP>/` returns HTTP 200, title
-  `Forgejo: Beyond coding. We forge.`
-- `ss -tlnp`: ports 80 and 2222 listen on `<IP>` only; no `[::]:80` or
-  `[::]:2222` listener, so the public IPv6 address serves nothing.
-- `ssh -p 2222 git@<IP>` reaches the Forgejo SSH server
-  (`Permission denied (publickey)` — expected before any key is added).
-- Container logs clean: SQLite initialized, web listening on 3000, SSH
-  server on 2222, `AppURL(ROOT_URL)` matching the configured address.
-- `getent ahostsv4 forgejo.local` returns the LAN address and
-  `curl http://forgejo.local/` returns 200 (after changes 12–13).
-
-## Verification (HTTPS, changes 18–23)
-
-- `curl --cacert forgejo.crt https://<IP>/` returns HTTP 200, title
-  `Forgejo: Beyond coding. We forge.`
-- `curl http://<IP>/` returns 307 with `Location: https://<IP>/`. The
-  redirect keeps the method, so old `http://` clone URLs keep working.
-- `curl https://<IP>/` without `--cacert` fails: the self-signed
-  certificate is rejected, which is the point — verification stays on
-  everywhere.
-- `ss -tlnp`: ports 80, 443 and 2222 listen on `<IP>` only; no `[::]`
-  listener, so the public IPv6 address serves nothing.
-- `ssh -p 2222 git@<IP>` still reaches the Forgejo SSH server
-  (`Permission denied (publickey)`); the SSH path is untouched by TLS.
-- Container logs clean: `Listen: https://0.0.0.0:3000`,
-  `AppURL(ROOT_URL): https://<IP>/`, `Redirecting: 0.0.0.0:80`,
-  `SSH server started on :2222`.
-- Runner: log line `declared successfully` after the restart, runners
-  API shows `idle`, and the `Declare` POST arrives on the https listener.
-- CI: smoke run 5 `success` with both jobs `success`; the `ca-pin` job
-  log shows `GIT_SSL_CAINFO=/etc/ssl/certs/forgejo-lan.crt`, the mounted
-  certificate, and `git over https with pinned CA ok`.
-- CI with external access: run 11 `success`. The runner downloaded
-  `actions/checkout` from `data.forgejo.org`, the job pulled
-  `node:20-bookworm` from the registry, and the checkout ran over HTTPS
-  with the pinned certificate. A separate job installed `curl` with
-  `apt-get` and read `/api/v1/version` from the instance.
-- Runner trust is the mount: with the `/etc/ssl/certs` entry removed the
-  daemon exits with `fail to invoke Declare … x509: certificate signed
-  by unknown authority`; restored, it logs `declared successfully`.
-- `SSL_CERT_FILE` on the runner changes nothing for actions: run 12 was
-  `success` with the variable set, and `git ls-remote` inside the runner
-  image still verified `data.forgejo.org` with `SSL_CERT_FILE` pointing
-  at a nonexistent file.
-- Backup: `systemctl start forgejo-backup.service` wrote a new dump; the
-  newest dump holds 129 entries and none of them is the key or the
-  certificate directory.
-- `getent ahostsv4 forgejo.local` returns the LAN address and
-  `curl --cacert forgejo.crt https://forgejo.local/` returns 200: the
-  certificate covers the mDNS name as well as the address.
+`docs/forgejo-install-recipe.md`: the problems found, how the Actions
+runner and the backups are set up, and how client devices trust the
+certificate. The measured results behind each change set are in
+`docs/forgejo-operations-verification.md`.
 
 ## Footguns found
 
@@ -126,11 +74,29 @@ and how client devices trust the certificate.
   example `echo "… CA: ok"`) breaks workflow parsing. The run then shows
   a single failed job named after the commit message, with
   `runs_on: []` and no logs at all. Use a block scalar (`run: |`).
-- Inside job containers `<hostname>.local` does not reach the machine.
-  Docker's embedded DNS answers `.local` names itself, and the host
-  resolver sends back link-local IPv6 addresses or the bridge gateway,
-  so connections fail or land on the wrong address. Workflows must use
-  the LAN address.
+- Inside job containers `<hostname>.local` did not reach the machine
+  reliably. Two paths, two failures. On the default bridge a container
+  asks the LAN router, and no DNS server has a `.local` zone: the lookup
+  returns nothing (`ENOTFOUND` for Node). On a user-defined network —
+  compose services and the per-job networks the runner creates — Docker
+  forwards to the host's systemd-resolved, which answers the machine's
+  own mDNS name *synthetically* with every address it has: the LAN
+  address first, then `172.18.0.1`, `172.17.0.1` and the link-local IPv6
+  addresses. Connections then fail or land on a bridge gateway. Fixed by
+  change 27: `--add-host=forgejo.local:<IP>` puts the name in every job
+  container's `/etc/hosts`, which the resolver reads before it queries
+  DNS, so the answer is the LAN address alone.
+- The runner and Forgejo containers resolved `<hostname>.local` to all of
+  the machine's addresses (LAN address first, then the Docker bridge
+  gateways), because they get the host resolver's synthetic answer.
+  Nothing in the stack uses the name — the runner dials the address in
+  `.runner`, Forgejo calls itself through `localhost` — so this was a
+  hazard, not a fault. Change 28 pins the name with `extra_hosts` on both
+  compose services; the lookup now returns the LAN address alone.
+- `/srv/forgejo-runner/config.yaml` is generated. Re-running
+  `forgejo-runner generate-config` on a live target wipes the
+  `capacity`, `options`, `envs` and `valid_volumes` edits, including the
+  `--add-host` entry; recipe step 16 has to be replayed after it.
 - `docker image prune --filter until=168h` does not mean "unused for a
   week". `until` matches the image's build date, so a freshly pulled
   image is usually months old and is deleted the day it arrives.
@@ -155,8 +121,9 @@ Accepted risks and applied mitigations:
   (machine has 2 vCPUs, 4 GB RAM, no swap — do not raise capacity).
 - The runner publishes no ports; it only dials the instance, over HTTPS.
 - The runner and its job containers pin the instance certificate
-  (`/etc/ssl/certs/forgejo-lan.crt` plus `GIT_SSL_CAINFO`). The runner's
-  `insecure` option stays `false`: verification is never turned off.
+  (`/etc/ssl/certs/forgejo-lan.crt`, plus `GIT_SSL_CAINFO` and
+  `NODE_EXTRA_CA_CERTS` in the job environment). The runner's `insecure`
+  option stays `false`: verification is never turned off.
 - Recommended but NOT configured: disable or gate workflows from fork
   pull requests. Only accounts the admin creates can push, so the
   current exposure is trusted users only.
@@ -180,18 +147,28 @@ for git.
     Tested: `curl` returned 200 and `git ls-remote` worked with the
     mount alone, the file name made no difference, and the same file
     mounted outside that directory was rejected.
-  - Node keeps its own CA store. It still failed with
-    `DEPTH_ZERO_SELF_SIGNED_CERT` after `update-ca-certificates`, and
-    returned 200 with `NODE_EXTRA_CA_CERTS=/etc/ssl/certs/forgejo-lan.crt`.
+  - Node keeps its own CA store. It failed with
+    `DEPTH_ZERO_SELF_SIGNED_CERT` even after `update-ca-certificates`,
+    and returned 200 with
+    `NODE_EXTRA_CA_CERTS=/etc/ssl/certs/forgejo-lan.crt`. The runner now
+    sets that variable for every job container (change 29), so Node needs
+    no per-workflow setup. The variable is additive: the same job read
+    `https://registry.npmjs.org/` and got status 200.
   - Python `requests` reads the `certifi` bundle rather than the system
-    one, so it needs `REQUESTS_CA_BUNDLE`.
+    one, so it needs `REQUESTS_CA_BUNDLE`. That one cannot be set for all
+    jobs: it replaces the whole trust store, which would break
+    verification of public hosts — the same failure mode as
+    `SSL_CERT_FILE` on the runner. Set it per job, pointing at a bundle
+    that also holds the public CAs.
 - Running `update-ca-certificates` in a job adds the certificate to the
   bundle file (142 entries to 143) and changes nothing for Node. It
   needs root, and it only lasts for that one job container.
-- Address jobs by the LAN IP. Inside a job container `forgejo.local`
-  goes through Docker's embedded DNS to the host resolver and comes
-  back as a link-local IPv6 address or the bridge gateway, so
-  connections fail. The IP is in the certificate, so TLS is fine.
+- Both addresses work in job containers: the LAN address, and
+  `forgejo.local`, which the runner writes into every job container's
+  `/etc/hosts` through `--add-host` (change 27). The certificate names
+  both, so TLS verification passes either way. If the LAN address
+  changes, update `/opt/forgejo/.env` and the `--add-host` entry in
+  `/srv/forgejo-runner/config.yaml` together.
 - Job containers reach the instance and the internet. Verified: the
   runner downloaded `actions/checkout` from `data.forgejo.org`, a job
   pulled `node:20-bookworm` from the container registry, and
