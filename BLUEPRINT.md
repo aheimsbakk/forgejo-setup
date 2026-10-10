@@ -58,7 +58,9 @@ configuration files deployed to a target machine.
   component reads it through the application's own dump facility and
   writes zip files to a separate backup directory.
 - The runner container dials the instance over HTTPS; it publishes no
-  ports.
+  ports. Workflow actions with a relative reference are downloaded from
+  the instance itself, so every action a workflow uses must exist as a
+  repository on the instance (operator-maintained mirrors).
 - The disk cleanup component reads the service definition to learn
   which images the stack needs, reads the container engine's object
   list, and deletes only objects recorded as unused for the whole grace
@@ -81,7 +83,9 @@ configuration files deployed to a target machine.
 - Container name mapping: the service definition pins the instance name
   to the LAN address taken from the parameter store, and the runner's
   job-container settings hold a separate copy of that pair. The copy
-  must be updated whenever the address changes.
+   must be updated whenever the address changes. The default actions
+   URL is the instance itself: a workflow action reference without a
+   host is fetched from the instance's own repositories.
 - Deployment parameters: one untracked environment file per checkout.
 - Cleanup grace state: one record per currently unused image, holding
   the day it was first seen unused. An image becomes removable only
@@ -149,9 +153,11 @@ configuration files deployed to a target machine.
   and mDNS packages.
 - Official container images for the application and the runner, pinned
   to stable versions.
-- Public HTTPS hosts for Actions: the runner downloads third-party
-  actions, so it keeps the public trust store next to the pinned
-  certificate.
+- Public HTTPS hosts for container images: job images are pulled from
+  public registries, so the public trust store stays next to the pinned
+  certificate. Workflow actions are not fetched from public hosts: the
+  default actions URL is the instance itself, and the operator mirrors
+  the action repositories it needs onto the instance.
 - mDNS/multicast on the LAN for name discovery.
 - Instance administration API for runner registration and smoke tests.
 
