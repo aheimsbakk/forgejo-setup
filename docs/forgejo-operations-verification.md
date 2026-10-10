@@ -183,3 +183,13 @@ them. The problems found while reaching these results are in
   it after its 7-day grace period.
 - Smoke repo `ci-lts-image` and the `/opt/ci-self` push tooling deleted
   afterwards.
+
+## Browsing pagination 50 repos per page (change 35)
+
+- `app.ini` after the restart shows `[ui] EXPLORE_PAGING_NUM = 50` and
+  `[ui.user] REPO_PAGING_NUM = 50` (defaults were 20 and 15).
+- `https://forgejo.local/explore/repos` renders 50 repo cards; the user
+  profile page renders 50 as well.
+- Cost check: the listing is one indexed SQL query plus a total count;
+  the count does not depend on page size. The only growth is the HTML
+  response, which is small on a LAN.

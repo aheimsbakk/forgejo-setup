@@ -64,6 +64,13 @@ services:
       # After changing it, clear the runner's cached actions: the cache
       # is not invalidated on its own.
       - FORGEJO__actions__DEFAULT_ACTIONS_URL=self
+      # Pagination: 50 repositories per page when browsing. The listing is
+      # one indexed SQL query plus a total count, so a larger page costs a
+      # slightly bigger HTML response, not extra database work per page.
+      - FORGEJO__ui__EXPLORE_PAGING_NUM=50
+      # The dotted ini section [ui.user] is escaped as _0X2E_ in variable
+      # names; environment-to-ini decodes it back to the section.
+      - FORGEJO__ui_0X2E_user__REPO_PAGING_NUM=50
     volumes:
       - /srv/forgejo:/data
       - /srv/forgejo-certs:/etc/forgejo/certs:ro

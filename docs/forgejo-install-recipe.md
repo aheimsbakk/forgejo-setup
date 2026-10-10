@@ -79,6 +79,10 @@ script loads `.env` and only prompts for what is missing.
   per-workflow image choice. The line is the Active LTS at install
   time; Node 20 reached end-of-life 2026-04-30 and was replaced by
   change 34.
+- Browsing shows 50 repositories per page (`EXPLORE_PAGING_NUM=50` in
+  `[ui]`, `REPO_PAGING_NUM=50` in `[ui.user]`; defaults are 20 and 15).
+  A repository listing is one indexed SQL query plus a total count, so
+  a larger page only makes the HTML response bigger.
 
 ## Changes applied (first run, anonymized)
 
@@ -118,6 +122,7 @@ script loads `.env` and only prompts for what is missing.
 | 32 | 2026-10-10 | Actions served by the instance: `DEFAULT_ACTIONS_URL=self` in the compose file; the runner container builds a merged CA bundle (public CAs + instance cert) at start and points `GIT_SSL_CAINFO` at it, so its git verifies the instance when downloading actions; the runner's action cache cleared | copy updated `forgejo/docker-compose.yml`; `cd /opt/forgejo && docker-compose up -d`; `rm -rf /srv/forgejo-runner/.cache` | `app.ini` shows `DEFAULT_ACTIONS_URL = self`; job log shows `git clone 'https://forgejo.local/actions/checkout' # ref=v4`; the cache clone's remote is `https://forgejo.local/actions/checkout`; smoke run `success` with `uses: actions/checkout@v4` against the mirrored `actions/checkout` repo (job image `node:20-bookworm`), repo deleted after |
 | 33 | 2026-10-10 | Default job image switched from `debian:bookworm` to `node:20-bookworm`: the runner's registration label in `/srv/forgejo-runner/.runner` changed to `docker:docker://node:20-bookworm` (runner id and token kept) | `sed -i` on the label line of `/srv/forgejo-runner/.runner`; `docker restart forgejo-runner` | runner log `declared successfully`; smoke run 21 `success` with `runs-on: docker` and no `container.image`: log shows `Start image=node:20-bookworm`, `actions/checkout@v4` ran (git 2.39.5), `node --version` printed `v20.20.2`; repo deleted after |
 | 34 | 2026-10-10 | Default job image moved to the Active LTS line: label `docker:docker://node:24-bookworm` — Node 20 reached end-of-life 2026-04-30, its image is frozen at 20.20.2 and gets no security fixes | `sed -i` on the label line of `/srv/forgejo-runner/.runner`; `docker restart forgejo-runner` | runner log `declared successfully`; smoke run 22 `success`: `Start image=node:24-bookworm`, `node --version` printed `v24.21.0`, `actions/checkout@v4` ran (git 2.39.5); repo deleted after; `node:20-bookworm` now unused and will be reclaimed by the daily cleanup after its grace period |
+| 35 | 2026-10-10 | Browsing pagination raised to 50 repos per page: `FORGEJO__ui__EXPLORE_PAGING_NUM=50` and `FORGEJO__ui_0X2E_user__REPO_PAGING_NUM=50` in the compose file (`_0X2E_` is the environment-to-ini escape for the dot in the `[ui.user]` section) | copy updated `forgejo/docker-compose.yml`; `cd /opt/forgejo && docker-compose up -d` | `app.ini` shows `EXPLORE_PAGING_NUM = 50` in `[ui]` and `REPO_PAGING_NUM = 50` in `[ui.user]`; the explore page and the user profile page each render 50 repo cards |
 
 Operator-side change (not on the target): the target address was added
 to the operator's `known_hosts` by `StrictHostKeyChecking=accept-new`.

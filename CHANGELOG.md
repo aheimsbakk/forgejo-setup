@@ -1,5 +1,16 @@
 # Changelog
 
+## [0.5.0] - 2026-10-10
+
+- **why:** The operator browses many repositories. The default page sizes (20 on explore, 15 on a profile) forced extra clicks, and a larger page costs almost nothing.
+- **model:** kompis/qwen3.8-flash-next-iq3_s
+- **tags:** forgejo, ui, pagination
+
+### Changed
+
+- `forgejo/docker-compose.yml`: added `FORGEJO__ui__EXPLORE_PAGING_NUM=50` and `FORGEJO__ui_0X2E_user__REPO_PAGING_NUM=50` (recipe change 35). The explore page and user profile pages now list 50 repositories per page
+- A repository listing is one indexed SQL query plus a total count; the count does not depend on page size, so the only growth is the HTML response
+
 ## [0.4.0] - 2026-10-10
 
 - **why:** Workflows pulled actions from public forges. The operator mirrors every used action on the instance, so relative `uses:` references must resolve locally — and the default job image must be able to run them on a supported Node line.
