@@ -28,9 +28,14 @@ services:
       - USER_GID=1000
       # Database: built-in SQLite inside the data volume.
       - FORGEJO__database__DB_TYPE=sqlite3
-      # Web addressing.
-      - FORGEJO__server__DOMAIN=${LAN_IP}
-      - FORGEJO__server__ROOT_URL=https://${LAN_IP}/
+      # Web addressing. The canonical URL is the mDNS name, not the
+      # address: Forgejo shows a mismatch warning to every client whose
+      # Host header differs from ROOT_URL, and clients reach the
+      # instance by name (Avahi on the LAN, extra_hosts and --add-host
+      # in containers). The address still serves; it only shows the
+      # warning. DOMAIN keeps generated SSH clone URLs on the name too.
+      - FORGEJO__server__DOMAIN=forgejo.local
+      - FORGEJO__server__ROOT_URL=https://forgejo.local/
       - FORGEJO__server__HTTP_PORT=3000
       # HTTPS with the self-signed certificate from gen-cert.sh. Absolute
       # paths: the default CERT_FILE/KEY_FILE are relative to CustomPath,

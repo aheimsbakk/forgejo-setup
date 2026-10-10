@@ -16,7 +16,7 @@ script loads `.env` and only prompts for what is missing.
 
 | Parameter | Used for | Example (documentation range) |
 |-----------|----------|-------------------------------|
-| `IP` | target address, port bindings, `ROOT_URL` | `192.0.2.40` |
+| `IP` | target address, port bindings, name pins | `192.0.2.40` |
 | `ADMIN_USER` | Forgejo admin account | `admin` |
 | `ADMIN_PASSWORD` | Forgejo admin password; never committed | (set in `.env`) |
 | `KEY` | SSH private key path | `tmp/ssh/id_ed2219` |
@@ -52,9 +52,17 @@ script loads `.env` and only prompts for what is missing.
   `FORGEJO__*` environment variables. The LAN IP is the only variable,
   supplied by `/opt/forgejo/.env`.
 - The hostname is `forgejo`, so the mDNS name is `forgejo.local`. That
-  name appears in four places: the hostname, the certificate subject
-  alternative names, the compose `extra_hosts` pin, and the runner's
-  `--add-host` option. A different hostname means changing all four.
+  name appears in six places: the hostname, the certificate subject
+  alternative names, the compose `extra_hosts` pin, the runner's
+  `--add-host` option, the canonical `ROOT_URL`/`DOMAIN`, and the
+  runner's registered instance URL. A different hostname means changing
+  all six.
+- The canonical web URL is `https://forgejo.local/`, not the address.
+  Forgejo warns every client that arrives under a host other than
+  `ROOT_URL`, and there is no host allow-list. The name is canonical
+  because clients use it (mDNS on the LAN, pins inside containers);
+  the address still serves content and git, browsers just see the
+  warning there.
 - Container disk use is bounded by a daily cleanup job: images unused
   for 7 days, stopped containers outside the compose stack, unused
   networks and the build cache. Volumes are never removed, and the
@@ -93,6 +101,8 @@ script loads `.env` and only prompts for what is missing.
 | 27 | 2026-10-10 | Job containers can resolve `forgejo.local`: `--add-host=forgejo.local:<IP>` added to the runner's `container.options`, so the name lands in every job container's `/etc/hosts` | `sed -i` on the `options` key of `/srv/forgejo-runner/config.yaml`; `docker restart forgejo-runner` | CI run 15 `success`: `getent ahostsv4 forgejo.local` returned `<IP>` inside the job, `git ls-remote https://forgejo.local/...` succeeded, and a `node:20-bookworm` job read `/api/v1/version` by name; without the option the lookup also returns the Docker bridge addresses `172.18.0.1` and `172.17.0.1` |
 | 28 | 2026-10-10 | Instance name pinned in the app and runner containers too: `extra_hosts: forgejo.local:<IP>` on both compose services | copy updated `forgejo/docker-compose.yml`; `cd /opt/forgejo && docker-compose up -d` | `docker exec forgejo getent ahostsv4 forgejo.local`, and the same in `forgejo-runner`, return the LAN address alone instead of three addresses; `curl --cacert forgejo.crt https://<IP>/` returns 200; runner log `declared successfully` |
 | 29 | 2026-10-10 | Node trusts the instance in job containers with no per-workflow setup: `NODE_EXTRA_CA_CERTS` added to the runner's `container.envs` | `sed -i` on the `envs` block of `/srv/forgejo-runner/config.yaml`; `docker restart forgejo-runner` | CI run 16 `success`: a job logged `NODE_EXTRA_CA_CERTS=/etc/ssl/certs/forgejo-lan.crt` without setting it in the workflow and fetched `https://forgejo.local/api/v1/version`; another job read `https://registry.npmjs.org/` with status 200, so public trust is intact; `git ls-remote` by name still ok |
+| 30 | 2026-10-10 | Canonical URL switched from the address to the name: `DOMAIN=forgejo.local`, `ROOT_URL=https://forgejo.local/` in the compose file; the runner's registered address in `/srv/forgejo-runner/.runner` switched to `https://forgejo.local/` (token and runner id kept) | copy updated `forgejo/docker-compose.yml`; `cd /opt/forgejo && docker-compose up -d`; `sed -i` on the `address` field of `/srv/forgejo-runner/.runner`; `docker restart forgejo-runner` | `curl --cacert forgejo.crt https://forgejo.local/` returns 200 and the page embeds `appUrl: 'https://forgejo.local/'` (the mismatch banner is injected client-side by comparing the browser host with this value, so curl never shows it); `https://<IP>/` still returns 200; `curl http://<IP>/` now redirects to `https://forgejo.local/`; container log shows `AppURL(ROOT_URL): https://forgejo.local/` and `Redirecting: 0.0.0.0:80 to https://forgejo.local`; runner log `declared successfully`, runners API `idle` |
+| 31 | 2026-10-10 | Admin account email placeholder changed from `<ADMIN_USER>@forgejo.lan` to `<ADMIN_USER>@forgejo.invalid`: `.local` is reserved for mDNS (RFC 6762) and must not appear in email addresses; `.invalid` is the RFC 6761 never-deliverable placeholder | `PATCH /api/v1/admin/users/<ADMIN_USER>` with `{"email":"<ADMIN_USER>@forgejo.invalid"}` | `forgejo admin user list` shows the new address |
 
 Operator-side change (not on the target): the target address was added
 to the operator's `known_hosts` by `StrictHostKeyChecking=accept-new`.
@@ -172,11 +182,13 @@ $SSH 'chmod +x /opt/forgejo/backup.sh && cp /opt/forgejo/forgejo-backup.{service
 # 10. Test one backup run
 $SSH 'systemctl start forgejo-backup.service && ls -la /srv/forgejo-backups/'
 
-# 11. Create the admin account (email is required; placeholder domain ok).
+# 11. Create the admin account (email is required; placeholder domain
+# ok). The placeholder uses `.invalid` (RFC 6761: never deliverable);
+# `.local` is reserved for mDNS and must not appear in email addresses.
 # Credentials travel on stdin so special characters cannot break the
 # remote command line and never appear in the process list.
 printf '%s\n%s\n' "$ADMIN_USER" "$ADMIN_PASS" |
-  $SSH 'read -r U; read -r P; docker exec -u 1000 forgejo forgejo admin user create --username "$U" --password "$P" --email "$U@forgejo.lan" --admin'
+  $SSH 'read -r U; read -r P; docker exec -u 1000 forgejo forgejo admin user create --username "$U" --password "$P" --email "$U@forgejo.invalid" --admin'
 
 # 12. mDNS LAN discovery: libnss-mdns resolves .local names,
 # avahi-daemon announces <hostname>.local. Restrict avahi to the LAN
@@ -197,9 +209,11 @@ $SSH 'mkdir -p /srv/forgejo-runner'
 
 # 15. Register the runner (deprecated global token is the one that
 # works with forgejo-runner register; pipe it via stdin). The instance
-# URL is https: the stored address is what the runner dials later.
+# URL is the canonical name: the stored URL is what the runner dials
+# later, and the compose extra_hosts pin resolves the name inside the
+# runner container.
 TOKEN=$(curl -s --cacert "$CA" -u "$ADMIN_USER:$ADMIN_PASSWORD" "https://$IP/api/v1/admin/runners/registration-token" | sed -n 's/.*"token":"\([^"]*\)".*/\1/p')
-printf '%s' "$TOKEN" | $SSH 'read -r T; cd /opt/forgejo && docker-compose run --rm -T runner forgejo-runner generate-config > /srv/forgejo-runner/config.yaml && docker-compose run --rm -T runner forgejo-runner register --config /data/config.yaml --instance https://'"$IP"'/ --token "$T" --labels "docker:docker://debian:bookworm" --no-interactive'
+printf '%s' "$TOKEN" | $SSH 'read -r T; cd /opt/forgejo && docker-compose run --rm -T runner forgejo-runner generate-config > /srv/forgejo-runner/config.yaml && docker-compose run --rm -T runner forgejo-runner register --config /data/config.yaml --instance https://forgejo.local/ --token "$T" --labels "docker:docker://debian:bookworm" --no-interactive'
 
 # 16. Runner config: capacity 2, per-job memory/CPU limits plus the
 # certificate mounted into job containers, GIT_SSL_CAINFO and

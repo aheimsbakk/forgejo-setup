@@ -1,5 +1,23 @@
 # Changelog
 
+## [0.3.2] - 2026-10-10
+
+- **why:** Browsing `https://forgejo.local/` showed a "configured to be served on …" warning, because `ROOT_URL` named the LAN address. Clients use the name, so the name must be canonical.
+- **model:** kompis/qwen3.8-flash-next-iq3_s
+- **tags:** forgejo, root-url, dns, runner, email
+
+### Fixed
+
+- Browsing by `forgejo.local` no longer shows the canonical-URL warning: `DOMAIN` and `ROOT_URL` in `forgejo/docker-compose.yml` now name the instance by its mDNS name. The address still serves content and git; browsers see the warning there instead
+
+### Changed
+
+- The runner's registered instance URL (`/srv/forgejo-runner/.runner`, recipe step 15) switched to `https://forgejo.local/`; the compose `extra_hosts` pin resolves the name inside the runner container
+- The port-80 redirector now sends clients to `https://forgejo.local/`
+- Account email placeholder changed from `@forgejo.lan` to `@forgejo.invalid` (RFC 6761, never deliverable). `.local` is reserved for mDNS (RFC 6762) and must not appear in email addresses. Recipe change 31 updates the existing admin via the API
+- `README.md`: browse and clone by `https://forgejo.local/`; the address is documented as the non-canonical alternative
+- Recipe change 30 recorded; reproduce step 15 registers with `--instance https://forgejo.local/`
+
 ## [0.3.1] - 2026-10-10
 
 - **why:** Inside containers the instance name resolved to the wrong address, so workflows had to use the LAN IP. The reproduce procedure also lacked checks that would catch a silent config failure.

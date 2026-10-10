@@ -106,6 +106,12 @@ certificate. The measured results behind each change set are in
 - `docker image prune -a` also removes the pinned stack images when the
   compose stack is stopped, because nothing references them then.
   `cleanup.sh` protects the images named in the compose file.
+- Forgejo serves one canonical URL (`ROOT_URL`) and warns every client
+  whose Host header differs from it: "This Forgejo instance is
+  configured to be served on …". There is no host allow-list, so
+  browsing by the other host always shows the banner. Change 30 makes
+  the mDNS name canonical; the address still serves content and git,
+  browsers just see the warning there.
 
 ## CI runner (same box)
 
@@ -166,9 +172,11 @@ for git.
 - Both addresses work in job containers: the LAN address, and
   `forgejo.local`, which the runner writes into every job container's
   `/etc/hosts` through `--add-host` (change 27). The certificate names
-  both, so TLS verification passes either way. If the LAN address
-  changes, update `/opt/forgejo/.env` and the `--add-host` entry in
-  `/srv/forgejo-runner/config.yaml` together.
+  both, so TLS verification passes either way. Since change 30 the
+  canonical URL is the name, so the clone URLs Forgejo hands out — and
+  the URLs Actions checkouts use — are name-based and resolve through
+  that pin. If the LAN address changes, update `/opt/forgejo/.env` and
+  the `--add-host` entry in `/srv/forgejo-runner/config.yaml` together.
 - Job containers reach the instance and the internet. Verified: the
   runner downloaded `actions/checkout` from `data.forgejo.org`, a job
   pulled `node:20-bookworm` from the container registry, and
@@ -255,7 +263,9 @@ it with what `gen-cert.sh` printed.
      device settings
 3. For a single git repository instead of the whole system:
    `git -C <repo> config http.sslCAInfo /absolute/path/forgejo.crt`
-4. Verify: `curl https://<IP>/` returns 200 without any insecure flag.
+4. Verify: `curl https://forgejo.local/` returns 200 without any
+   insecure flag. Browse by that name: the address is not the canonical
+   URL and shows a mismatch warning in the web UI (change 30).
 
 Browsers accept the certificate on first use instead, but the warning
 returns whenever the certificate is regenerated.

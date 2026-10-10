@@ -11,3 +11,5 @@
 | Job container trust: /etc/ssl/certs covers OpenSSL tools, runner sets NODE_EXTRA_CA_CERTS | pattern | medium | forgejo, actions, tls, ca-certificates, job-containers | | archive/2026-10-10-job-container-trust-per-tool.md |
 | Docker disk cleanup: 7-day grace record, stack images protected | decision | medium | forgejo, docker, cleanup, disk, systemd | | archive/2026-10-09-docker-cleanup-grace-record.md |
 | Containers and <hostname>.local: two failure modes, one fix | warning | medium | forgejo, actions, dns, job-containers, runner | | archive/2026-10-10-containers-hostname-local-two-failure-modes.md |
+| Forgejo URL mismatch banner is client-side; canonical URL is the name | warning | medium | forgejo, root-url, dns, verification, banner | | archive/2026-10-10-canonical-url-banner-is-client-side.md |
+| Email placeholders: use .invalid, never .local | warning | low | forgejo, email, mdns, rfc6761 | | archive/2026-10-10-email-placeholder-invalid-not-local.md |

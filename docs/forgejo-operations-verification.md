@@ -93,3 +93,32 @@ them. The problems found while reaching these results are in
   returns 200, and the runner logs `declared successfully`.
 - Recipe step 16 replayed against a fresh `generate-config` output again
   produced a file identical to the deployed config.
+
+## Canonical URL by name (change 30)
+
+- Container logs after the recreate: `AppURL(ROOT_URL):
+  https://forgejo.local/` and `Redirecting: 0.0.0.0:80 to
+  https://forgejo.local`.
+- `curl --cacert forgejo.crt https://forgejo.local/` returns 200; the
+  page embeds `appUrl: 'https://forgejo.local/'`. The mismatch banner
+  is injected by the frontend JavaScript comparing the browser host
+  with that value — the server-rendered HTML is identical for both
+  hosts (diff: only a timing comment), so curl cannot show or hide the
+  banner; a browser at `https://forgejo.local/` matches and shows
+  nothing.
+- `curl --cacert forgejo.crt https://<IP>/` still returns 200: the
+  address serves, browsers just see the banner there.
+- `curl http://<IP>/` returns 307 with `Location:
+  https://forgejo.local/`.
+- Runner: `.runner` address now `https://forgejo.local/`, log line
+  `declared successfully` after the restart, runners API
+  `"status":"idle"`.
+
+## Email placeholder cleanup (change 31)
+
+- `PATCH /api/v1/admin/users/<ADMIN_USER>` returned 200;
+  `forgejo admin user list` shows `<ADMIN_USER>@forgejo.invalid`.
+- The listing also showed a second, operator-created account `robot`
+  with email `robot@forgejo.local`. `.local` is reserved for mDNS and
+  should not appear in addresses; changing that account's email is the
+  operator's call, not part of this change.

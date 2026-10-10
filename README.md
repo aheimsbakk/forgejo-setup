@@ -31,22 +31,27 @@ as root on it.
 3. Import the certificate (`tmp/certs/forgejo.crt`) on the device you
    browse from — the "Client trust" section of
    `docs/forgejo-operations.md` lists the command for each OS.
-4. Open `https://<target-ip>/` in a browser and sign in with the admin
-   account you chose.
+4. Open `https://forgejo.local/` in a browser and sign in with the
+   admin account you chose. That name is the canonical URL; opening
+   the address `https://<target-ip>/` shows a mismatch warning.
 
 ## Using the instance
 
-- Web UI: `https://<target-ip>/` — or `https://forgejo.local/` from any
-  device on the LAN (mDNS discovery). Both names are in the certificate.
-- Clone over HTTPS: `https://<target-ip>/<owner>/<repo>.git`
-- Clone over SSH: `ssh://git@<target-ip>:2222/<owner>/<repo>.git`
+- Web UI: `https://forgejo.local/` from any device on the LAN (mDNS
+  discovery). This is the canonical URL. The address
+  `https://<target-ip>/` also serves, but browsers show a mismatch
+  warning there. Both names are in the certificate.
+- Clone over HTTPS: `https://forgejo.local/<owner>/<repo>.git` (the
+  address works too)
+- Clone over SSH: `ssh://git@forgejo.local:2222/<owner>/<repo>.git`
+  (first use asks you to accept the server host key)
 - Old `http://` clone URLs keep working: the server answers with a
   redirect to the same address over HTTPS.
 - New accounts: registration is off. The admin creates accounts under
   Site Administration, or with:
   ```bash
   ssh -i <key> root@<target-ip> \
-    'docker exec -u 1000 forgejo forgejo admin user create --username <name> --password <pw> --email <name>@forgejo.lan'
+    'docker exec -u 1000 forgejo forgejo admin user create --username <name> --password <pw> --email <name>@forgejo.invalid'
   ```
 
 ## CI/CD
