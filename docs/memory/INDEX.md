@@ -16,3 +16,4 @@
 | Runner git and Go have separate trust stores; merged CA bundle at start | warning | high | forgejo, actions, runner, tls, ca-bundle | | archive/2026-10-10-runner-git-vs-go-trust.md |
 | DEFAULT_ACTIONS_URL=self: mirrored public repos, cache and node gotchas | decision | medium | forgejo, actions, mirror, runner-cache, node | | archive/2026-10-10-default-actions-url-self.md |
 | Default job image is node:24-bookworm; the label lives in .runner | decision | medium | forgejo, actions, runner, labels, job-image | | archive/2026-10-10-default-job-image-node-lts.md |
+| FORGEJO__ env vars: dotted ini sections need _0X2E_ escape | pattern | medium | forgejo, docker, env-vars, app-ini, pagination | | archive/2026-10-10-env-to-ini-dot-escape.md |
