@@ -1,16 +1,25 @@
 # Contributing
 
 Developer guide for this repo. User-facing product notes are in
-`docs/forgejo-install-recipe.md`.
+`README.md`.
 
 ## Layout
 
-- `docs/forgejo-install-recipe.md` — the recipe: every change applied to
-  a target machine, in order, with commands and verification.
-- `docs/forgejo-operations.md` — problems found, runner and backup setup,
-  and how client devices trust the certificate.
+- `docs/forgejo-install-recipe.md` — the recipe: parameters, decisions,
+  and every change applied to a target machine, in order.
+- `docs/forgejo-install-steps.md` — the reproduce procedure: the commands,
+  in order, that rebuild the instance on a fresh machine.
+- `docs/forgejo-footguns.md` — problems found, each with the symptom and
+  the fix.
+- `docs/forgejo-ci-and-registry.md` — the Actions runner, the container
+  registry, access from job containers, mirrored workflow actions.
+- `docs/forgejo-operations.md` — backup and restore, disk cleanup, and how
+  client devices and the Docker daemon trust the certificate.
 - `docs/forgejo-operations-verification.md` — measured results for each
   change set: the commands run and what they returned.
+- `docs/forgejo-backup-restore-verification.md` — the same for the backup
+  script, the dump format, the restore drill and the global encryption
+  key.
 - `forgejo/` — files deployed to a target machine under `/opt/forgejo/`.
 - `.env` — real parameters (`IP`, `ADMIN_USER`, `ADMIN_PASSWORD`, `KEY`)
   for the current deployment. Gitignored, mode 600. Never commit it.
@@ -30,14 +39,25 @@ Developer guide for this repo. User-facing product notes are in
 ### `forgejo/backup.sh`
 
 Creates one Forgejo dump per run and keeps only the 7 newest in
-`/srv/forgejo-backups`. Deploy to `/opt/forgejo/backup.sh` (mode 755)
-on the target. No arguments. Run manually for testing:
+`/srv/forgejo-backups`. The dump leaves out container registry blobs
+(`forgejo dump --skip-package-data`): CI rebuilds the images and they
+dominate dump size. Deploy to `/opt/forgejo/backup.sh` (mode 755) on the
+target. No arguments. Run manually for testing:
 
 ```bash
 ssh -i <key> root@<ip> 'systemctl start forgejo-backup.service'
 ```
 
-Requires the `forgejo` container to be running.
+Requires the `forgejo` container to be running. To check what a dump
+holds, grep the zip entry names — they are stored uncompressed, and the
+target has no unzip:
+
+```bash
+ssh -i <key> root@<ip> 'grep -c data/packages $(ls -1t /srv/forgejo-backups/forgejo-dump-*.zip | head -1)'
+```
+
+Expect `0`. The command exits non-zero when it finds nothing, which is
+the pass case. A non-zero count means the flag was dropped.
 
 ### `forgejo/forgejo-backup.service` and `forgejo/forgejo-backup.timer`
 

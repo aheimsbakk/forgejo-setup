@@ -12,8 +12,9 @@ What it gives you:
   interfaces of the machine
 - A self-signed certificate created on the machine; every device that
   connects trusts it once
-- A daily full backup (database, repositories, config) that keeps the
-  7 newest restore points
+- A daily backup (database, repositories, config) that keeps the
+  7 newest restore points; container images in the instance registry are
+  left out because CI rebuilds them
 - A daily disk cleanup that removes container images and stopped
   containers unused for a week
 - A step-by-step install recipe you can rerun on any fresh Debian 13
@@ -25,9 +26,8 @@ You need: a Debian 13 machine on your network, and SSH private key access
 as root on it.
 
 1. Clone this repo on the machine you run SSH from.
-2. Open `docs/forgejo-install-recipe.md` and follow the
-   "Reproduce (full recipe)" section top to bottom. It asks for the
-   target IP, an admin username, and an admin password.
+2. Open `docs/forgejo-install-steps.md` and follow it top to bottom. It
+   asks for the target IP, an admin username, and an admin password.
 3. Import the certificate (`tmp/certs/forgejo.crt`) on the device you
    browse from — the "Client trust" section of
    `docs/forgejo-operations.md` lists the command for each OS.
@@ -70,7 +70,7 @@ privileged jobs are not available.
   job container's hosts file. Most command-line tools already trust the
   certificate from that directory, and `NODE_EXTRA_CA_CERTS` is set for
   every job; Python `requests` still needs its own variable — see
-  "Access from job containers" in `docs/forgejo-operations.md`.
+  "Access from job containers" in `docs/forgejo-ci-and-registry.md`.
 - The default job image `node:24-bookworm` has git and node, so
   mirrored JavaScript actions work with no image choice. A minimal
   image such as Alpine has neither: the runner then runs steps with
@@ -85,7 +85,7 @@ privileged jobs are not available.
   `container.image: forgejo.local/<owner>/<repo>:<tag>`. Pushing needs
   a repository secret holding a user token that can write packages;
   the Actions token cannot. The steps are in "Container registry
-  (build, push, use)" in `docs/forgejo-operations.md`.
+  (build, push, use)" in `docs/forgejo-ci-and-registry.md`.
 
 Recommendation: if you ever allow pull requests from forks, disable or
 gate fork PR workflows in each repository's Actions settings. By default
@@ -93,18 +93,22 @@ they would run the contributor's code on your machine.
 
 ## Backups
 
-- A full backup runs daily at 03:30 UTC. Files land in
+- A backup runs daily at 03:30 UTC. Files land in
   `/srv/forgejo-backups/` on the instance machine; the 7 newest are kept.
 - Run one by hand:
   ```bash
   ssh -i <key> root@<target-ip> 'systemctl start forgejo-backup.service'
   ```
+- Container images pushed to the instance registry are not in a backup:
+  they are the fastest-growing part of the disk and CI can rebuild them.
+  After a restore the registry still lists those images, but pulling them
+  fails until CI pushes them again or you delete the entries under
+  owner settings → packages → cleanup rules.
 - Backups stay on the same machine. Copy them off-site yourself if you
   need protection against disk loss.
 - The TLS private key is not part of a backup; it lives in
   `/srv/forgejo-certs`. A restore needs a new certificate and new pins.
-- Restore steps: see the "Backup" section of
-  `docs/forgejo-operations.md`.
+- Restore steps: `docs/forgejo-restore.md`.
 
 ## Disk space
 
@@ -146,6 +150,10 @@ itself:
   `ssh -i <key> root@<target-ip> '/opt/forgejo/gen-cert.sh'`; they are
   valid for 5 years. A renewal invalidates every existing pin, so
   re-import the new `.crt` on each device.
+- The global encryption key is `/opt/forgejo/secrets/secret_key` on the
+  instance. It is not in any dump and not in this repository, so it needs
+  a backup of its own. Without it the instance cannot read the data it
+  encrypts, and it will not start.
 
 ## Contributing
 

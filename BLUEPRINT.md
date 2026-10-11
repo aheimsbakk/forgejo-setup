@@ -12,8 +12,9 @@ configuration files deployed to a target machine.
   never on public interfaces. The certificate is self-signed and pinned by
   the clients that connect (browsers, git clients, CI). Plain HTTP serves
   redirects to HTTPS only.
-- Keep a daily, full, self-contained restore point with bounded
-  retention (7 newest).
+- Keep a daily restore point with bounded retention (7 newest).
+  Container registry blobs stay out of it: the pipeline rebuilds them and
+  they dominate dump size.
 - Provide CI (Forgejo Actions) with a runner on the same machine under
   explicit resource limits.
 - Keep the container engine's disk use bounded: images, containers,
@@ -34,6 +35,11 @@ configuration files deployed to a target machine.
   public certificate so clients and CI can pin it.
 - Backup component — dump creation, relocation out of the live data
   directory, retention trimming, scheduled activation.
+- Restore procedure — the backup's counterpart: a file copy that puts the
+  dump's data and repositories back into the application layout, keeps
+  the instance's own configuration and certificate, and verifies the
+  database and the repositories afterwards. The application has no
+  restore facility of its own, so the procedure owns the layout mapping.
 - Disk cleanup component — scheduled removal of unused container
   engine objects (images, stopped containers, networks, build cache)
   once they have stayed unused through a grace period. The service
@@ -56,7 +62,9 @@ configuration files deployed to a target machine.
   from there to client devices, the runner container and job containers.
 - Forgejo writes all state to the host data directory; the backup
   component reads it through the application's own dump facility and
-  writes zip files to a separate backup directory.
+  writes zip files to a separate backup directory. The dump leaves out
+  the container registry blobs; it keeps the package records that
+  describe them.
 - The runner container dials the instance over HTTPS; it publishes no
   ports. Workflow actions with a relative reference are downloaded from
   the instance itself, so every action a workflow uses must exist as a
@@ -76,6 +84,10 @@ configuration files deployed to a target machine.
   updated.
 - Backup state: at most 7 dump files; trimming is part of every backup
   run.
+- Container registry state: blobs in the application data directory,
+  records in the application database. The blobs are outside the dump, so
+  the records outlive them after a restore until the owner's cleanup
+  rules delete them.
 - Runner registration state: stored in the runner data directory on the
   host and in the instance database. It also records the instance URL,
   so its scheme and host must match what the instance serves; it holds
@@ -114,9 +126,29 @@ configuration files deployed to a target machine.
   the LAN name and the loopback names in its subject alternative names,
   and is valid for five years. A run that finds an existing pair changes
   nothing. The key is readable only by the container user identity.
+- Encryption key contract: exactly one key file exists outside the
+  application data directory, readable by the container user identity and
+  named by path in the service definition. The configuration file carries
+  the path and no value; the two settings are mutually exclusive, so a
+  value in either place is the only form the application accepts. Losing
+  the file makes the data the application encrypts at rest unreadable.
 - Backup contract: one run produces exactly one new dump file in the
   backup directory and leaves at most 7; the dump contains database,
-  repositories, configuration and uploaded data.
+  repositories, configuration and uploaded data, but not the container
+  registry blobs. The package records stay in the database, so a restore
+  lists package versions whose files are absent. The package owner's
+  cleanup rules clear those records; the pipeline re-pushes the images it
+  needs.
+- Restore procedure: takes one dump file. It restores the data and the
+  repositories only: the service definition supplies the configuration at
+  every start, and the encryption key comes from the key file outside the
+  data directory. It hands the restored tree to the container user
+  identity before the first start. It verifies that the application
+  answers, that a repository can be read over git, and that a
+  token-authenticated read through the administration API succeeds. The
+  previous data directory stays in place as the fallback until those
+  checks pass. The certificate, the encryption key file, the runner state
+  and the registry blobs are out of scope.
 - Disk cleanup contract: one run removes untagged images, images no
   container references that have been unused for the whole grace
   period, containers outside the stack that have been stopped for the
@@ -134,7 +166,15 @@ configuration files deployed to a target machine.
 - Certificate and private key: their own host directory, outside the
   application data directory, so application dumps never contain the
   key.
+- Global encryption key: one file in a host secrets directory outside the
+  application data directory, referenced by path from the service
+  definition and mounted read-only into the application. The
+  configuration file holds no value for it, and no dump contains the
+  file.
 - Backups: zip archives named by creation time, retained by count.
+- Container registry blobs: inside the application data directory, but
+  kept out of the dump. They are rebuildable by the pipeline, so they are
+  the one part of application state that a restore does not reproduce.
 - Parameter store: untracked file, restricted permissions, never
   committed.
 - Cleanup grace record: one small file in a host state directory

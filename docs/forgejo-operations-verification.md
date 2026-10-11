@@ -1,9 +1,9 @@
 # Forgejo Verification
 
 Measured results for the instance installed by
-`docs/forgejo-install-recipe.md`, grouped by the change set that produced
-them. The problems found while reaching these results are in
-`docs/forgejo-operations.md`.
+`docs/forgejo-install-recipe.md` and `docs/forgejo-install-steps.md`,
+grouped by the change set that produced them. The problems found while
+reaching these results are in `docs/forgejo-footguns.md`.
 
 ## First run
 
@@ -254,3 +254,9 @@ then run a later job inside that image. Repositories
   token authenticates against the registry but cannot write; the measured
   token payload and the Forgejo source path are recorded in
   `docs/reports/2026-10-11-container-pipeline-build-push-use.md`.
+
+## Backup, restore and the global key
+
+Measured results for the backup script, the dump format, the restore
+drill and the global encryption key are in
+`docs/forgejo-backup-restore-verification.md`.

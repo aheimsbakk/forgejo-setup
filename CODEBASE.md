@@ -16,11 +16,18 @@ Concrete mapping from `BLUEPRINT.md` components to physical files.
 ├── .env.example                     parameter store template
 ├── .gitignore                       ignores tmp/, .env
 ├── docs/
-│   ├── forgejo-install-recipe.md    recipe component: change log + reproduce
-│   ├── forgejo-operations.md        footguns, runner, backup, client
-│   │                                certificate trust
+│   ├── forgejo-install-recipe.md    recipe component: parameters,
+│   │                                decisions, change register
+│   ├── forgejo-install-steps.md     reproduce procedure: commands in order
+│   ├── forgejo-footguns.md          configuration traps: symptom and fix
+│   ├── forgejo-ci-and-registry.md   runner, registry, job access, actions
+│   ├── forgejo-operations.md        backup, restore, cleanup, cert trust
+│   ├── forgejo-restore.md           restore procedure for a dump
 │   ├── forgejo-operations-verification.md
 │   │                                verification results per change set
+│   ├── forgejo-backup-restore-verification.md
+│   │                                backup, dump format, restore drill,
+│   │                                encryption key measurements
 │   ├── reports/                     dated investigation reports (history)
 │   │   └── 2026-10-11-container-pipeline-build-push-use.md
 │   │                                build -> push -> use test record
@@ -45,10 +52,10 @@ Concrete mapping from `BLUEPRINT.md` components to physical files.
 
 | Blueprint component | Files |
 |---|---|
-| Recipe | `docs/forgejo-install-recipe.md`, `docs/forgejo-operations.md`, `docs/forgejo-operations-verification.md` |
+| Recipe | `docs/forgejo-install-recipe.md`, `docs/forgejo-install-steps.md`, `docs/forgejo-footguns.md`, `docs/forgejo-ci-and-registry.md`, `docs/forgejo-operations.md`, `docs/forgejo-operations-verification.md`, `docs/forgejo-backup-restore-verification.md` |
 | Service configuration | `forgejo/docker-compose.yml`, `forgejo/.env.example` |
 | Certificate | `forgejo/gen-cert.sh`; exported copy `tmp/certs/forgejo.crt` (untracked) |
-| Backup | `forgejo/backup.sh`, `forgejo/forgejo-backup.service`, `forgejo/forgejo-backup.timer` |
+| Backup | `forgejo/backup.sh`, `forgejo/forgejo-backup.service`, `forgejo/forgejo-backup.timer`; restore procedure `docs/forgejo-restore.md` |
 | Disk cleanup | `forgejo/cleanup.sh`, `forgejo/forgejo-cleanup.service`, `forgejo/forgejo-cleanup.timer`; grace record `/var/lib/forgejo-cleanup/unused-images.tsv` (on the target, untracked) |
 | Parameter store | `.env` (untracked), `.env.example`, `forgejo/.env.example` |
 | Discovery | recipe change 12–13 (packages + Avahi interface pin) and change 27 (name mapping for job containers) |
@@ -58,13 +65,21 @@ Concrete mapping from `BLUEPRINT.md` components to physical files.
 
 ## Entry points
 
-- Reproduce procedure: "Reproduce (full recipe)" section of
-  `docs/forgejo-install-recipe.md` — the main "script" of the project.
+- Reproduce procedure: `docs/forgejo-install-steps.md` — the main
+  "script" of the project. `docs/forgejo-install-recipe.md` holds the
+  parameters, the decisions and the change register it implements.
 - Certificate creation: `/opt/forgejo/gen-cert.sh` on the target
   (source: `forgejo/gen-cert.sh`); run it before the first start and
   again before the certificate expires.
 - Backup run: `/opt/forgejo/backup.sh` on the target (source:
   `forgejo/backup.sh`), activated by the systemd timer units.
+- Restore run: `docs/forgejo-restore.md` — a file copy of `data/` and
+  `repos/` into the instance layout. Forgejo 16.0.5 has no restore
+  command and its dumps carry no restore script.
+- Encryption key: `/opt/forgejo/secrets/secret_key` on the target,
+  created by step 6c of the reproduce procedure and mounted read-only at
+  `/etc/forgejo/secret_key` by the compose file. It has no source file in
+  this repository on purpose.
 - Disk cleanup run: `/opt/forgejo/cleanup.sh` on the target (source:
   `forgejo/cleanup.sh`), activated by the cleanup timer units.
 - Version tooling: `scripts/bump-version.sh`,
@@ -90,12 +105,21 @@ Concrete mapping from `BLUEPRINT.md` components to physical files.
 - Cleanup state on the target: `/var/lib/forgejo-cleanup/` holds the
   unused-image grace record. It contains image ids and dates only, and
   is never copied into the repo.
+- Encryption key state on the target: `/opt/forgejo/secrets/` (mode 750)
+  and `secret_key` inside it (mode 640, `root:1000`). The value is
+  generated on the target by `forgejo generate secret SECRET_KEY`, is
+  referenced from the compose file only as
+  `SECRET_KEY_URI=file:/etc/forgejo/secret_key`, and is never copied into
+  the repo or into a dump.
 
 ## Language rationale
 
 - Bash was chosen for `backup.sh` because it orchestrates existing
   remote commands (container exec, file moves, retention trimming)
-  without adding a runtime dependency to the target.
+  without adding a runtime dependency to the target. The registry
+  exclusion is a `forgejo dump` flag (`--skip-package-data`), not an
+  `app.ini` setting, so it lives in the script and cannot be set from the
+  compose file.
 - `gen-cert.sh` is also bash and calls the `openssl` already shipped by
   Debian. Generating the certificate on the target keeps the private key
   off the operator's machine and off the network, and avoids adding a

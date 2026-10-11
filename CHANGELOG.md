@@ -1,5 +1,34 @@
 # Changelog
 
+## [0.7.0] - 2026-10-11
+
+- **why:** Backups carried rebuildable container images, the instance had no global encryption key, and the documented restore procedure did not match what Forgejo 16.0.5 dumps contain.
+- **model:** kompis/qwen3.8-flash-next-iq3_s
+- **tags:** forgejo, backup, restore, secrets, documentation
+
+### Added
+
+- `docs/forgejo-restore.md`: the restore procedure for a dump, verified by a restore drill on the target. Forgejo 16.0.5 has no restore command and its dumps carry no `restore.sh`
+- Recipe change 38 and reproduce step 6c: create `/opt/forgejo/secrets/secret_key` before the first start, mode 640 `root:1000`
+- `docs/forgejo-install-steps.md`, `docs/forgejo-footguns.md`, `docs/forgejo-ci-and-registry.md`, `docs/forgejo-backup-restore-verification.md`: topic files split out of the recipe and operations documents, which had passed 300 lines
+- `docs/memory/archive/`: entries for the dump restore footguns, the empty `SECRET_KEY`, and two-factor blocking basic auth
+
+### Changed
+
+- `forgejo/backup.sh` now runs `forgejo dump --skip-package-data`. One dump went from 85,498,046 to 63,054,363 bytes; the package records stay in the database and cleanup rules clear them
+- `forgejo/docker-compose.yml` sets `FORGEJO__security__SECRET_KEY_URI=file:/etc/forgejo/secret_key` and mounts that file read-only, so the key is in no dump and not in a tracked file
+- Recipe change 37 and 38 rows, and the operations and verification sections, now carry the measured sizes, dump listings and restore-drill results
+
+### Fixed
+
+- The restore notes told the reader to run a `restore.sh` from the dump and to use `unzip`; neither exists on Forgejo 16.0.5 or on the target
+- The verification record claimed the live `app.ini` had `SECRET_KEY` set; it held an empty value
+
+### Security
+
+- The global encryption key is set and stored outside the data directory, readable only by root and the container user
+- Recorded that a dump's `app.ini` carries `INTERNAL_TOKEN` and `[oauth2] JWT_SECRET` unchanged; dumps are mode 600 and a remote copy needs encrypted storage
+
 ## [0.6.0] - 2026-10-11
 
 - **why:** Pipelines could not hand container images to each other. A job can now build an image, push it to the instance registry, and a later job can run inside that image. The Docker daemon performs every job-image pull, so it needed its own copy of the instance certificate.
