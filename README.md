@@ -57,7 +57,7 @@ as root on it.
 ## CI/CD
 
 Forgejo Actions is enabled. A runner shares the machine with the
-instance: workflows with `runs-on: docker` run in Debian bookworm
+instance: workflows with `runs-on: docker` run in `node:24-bookworm`
 containers, two jobs at a time, each limited to 1 CPU and 1 GB RAM.
 Build container images with buildah inside jobs; docker-in-docker and
 privileged jobs are not available.
@@ -71,11 +71,21 @@ privileged jobs are not available.
   certificate from that directory, and `NODE_EXTRA_CA_CERTS` is set for
   every job; Python `requests` still needs its own variable — see
   "Access from job containers" in `docs/forgejo-operations.md`.
-- The default job image (`debian:bookworm`) has no git. Pick an image
-  that has it when a job needs git.
-- Actions published on other forges are downloaded by the runner, and
-  jobs can pull images and install packages, so the machine needs
-  outbound internet access.
+- The default job image `node:24-bookworm` has git and node, so
+  mirrored JavaScript actions work with no image choice. A minimal
+  image such as Alpine has neither: the runner then runs steps with
+  `sh`, and `actions/checkout` cannot run in it.
+- Actions come from the instance: `uses: actions/checkout@v4` clones
+  `https://forgejo.local/actions/checkout`, so every action a workflow
+  uses must be mirrored here and public. A full URL in `uses:` still
+  downloads from another forge. Jobs also pull images and install
+  packages, so the machine needs outbound internet access.
+- A job can build a container image, push it to the instance registry,
+  and a later job can run inside it:
+  `container.image: forgejo.local/<owner>/<repo>:<tag>`. Pushing needs
+  a repository secret holding a user token that can write packages;
+  the Actions token cannot. The steps are in "Container registry
+  (build, push, use)" in `docs/forgejo-operations.md`.
 
 Recommendation: if you ever allow pull requests from forks, disable or
 gate fork PR workflows in each repository's Actions settings. By default

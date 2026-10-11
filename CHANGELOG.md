@@ -12,10 +12,12 @@
 - `docs/forgejo-operations.md`: "Container registry (build, push, use)" section, plus footguns for daemon registry trust, the extension-based cert lookup, the Actions token's missing push rights, unprivileged buildah, and the `content` copy trap
 - `docs/reports/2026-10-11-container-pipeline-build-push-use.md`: the full test record. Repositories `agent/container-build-test` and `agent/container-use-test` stay on the instance
 - `docs/memory/archive/`: two warning entries — the Actions token cannot push packages, and buildah needs a rootless uid, `vfs` storage and no `RUN`
+- `README.md`: the CI/CD section now names `node:24-bookworm` as the default job image, says actions resolve to mirrored repositories on the instance, and lists the container registry as something you can use
 
 ### Changed
 
 - `CODEBASE.md`: added the `docs/reports/` component and the container pipeline mapping
+- `docs/forgejo-operations.md`: the git-in-job footgun no longer reads as if the default job image lacks git
 
 ### Fixed
 

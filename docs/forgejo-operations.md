@@ -68,8 +68,9 @@ behind each change set are in
 - The HTTP redirector answers with 307, so a runner whose `.runner`
   file still holds an `http://` address keeps working — at the cost of
   one redirect per request. Switch the address instead of relying on it.
-- The `debian:bookworm` job image has no git. A job that runs git needs
-  an image that has it. Change 33 made the default `node:20-bookworm`
+- A minimal job image such as `debian:bookworm` or Alpine has no git:
+  the runner then runs steps with `sh`, and `actions/checkout` cannot
+  run in it. Change 33 made the default `node:20-bookworm`
   and change 34 moved it to `node:24-bookworm` (Node 20 went
   end-of-life 2026-04-30; its image is frozen and gets no security
   fixes). The default lives in the runner's registration file
