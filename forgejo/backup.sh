@@ -1,7 +1,12 @@
 #!/bin/bash
 # Daily consistent Forgejo backup using the built-in dump command.
 # The zip contains the SQLite database, repositories, config and LFS
-# data, so it is a full restore point, not just the database.
+# data, so it is a restore point, not just the database.
+# Container registry blobs are excluded (--skip-package-data): CI
+# rebuilds the images, and they were 22 MB of a 95 MB dump on the first
+# target. The database still holds the package rows, so a restore lists
+# package versions whose files are absent; the owner's package cleanup
+# rules remove those entries after a restore or a CI run.
 # Remote copy of /srv/forgejo-backups is handled separately by the
 # operator.
 set -euo pipefail
@@ -20,7 +25,7 @@ mkdir -p "$BACKUP_DIR"
 # forgejo dump aborts if the repositories dir does not exist yet (fresh
 # install, no repos). Create it idempotently before dumping.
 docker exec -u 1000 forgejo mkdir -p /data/git/repositories
-docker exec -u 1000 -w /data forgejo forgejo dump >/dev/null
+docker exec -u 1000 -w /data forgejo forgejo dump --skip-package-data >/dev/null
 find /srv/forgejo -maxdepth 1 -name 'forgejo-dump-*.zip' -exec mv {} "$BACKUP_DIR/" \;
 
 # Keep exactly the newest RETENTION dumps; delete the rest.
