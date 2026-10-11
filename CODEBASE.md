@@ -21,6 +21,9 @@ Concrete mapping from `BLUEPRINT.md` components to physical files.
 │   │                                certificate trust
 │   ├── forgejo-operations-verification.md
 │   │                                verification results per change set
+│   ├── reports/                     dated investigation reports (history)
+│   │   └── 2026-10-11-container-pipeline-build-push-use.md
+│   │                                build -> push -> use test record
 │   └── memory/                      agent session memory (INDEX.md, archive/)
 ├── forgejo/                         service configuration component
 │   ├── docker-compose.yml           Forgejo app + Actions runner definitions
@@ -50,6 +53,8 @@ Concrete mapping from `BLUEPRINT.md` components to physical files.
 | Parameter store | `.env` (untracked), `.env.example`, `forgejo/.env.example` |
 | Discovery | recipe change 12–13 (packages + Avahi interface pin) and change 27 (name mapping for job containers) |
 | CI runner | `forgejo/docker-compose.yml` (runner service), recipe changes 14–17, 20–23 and 27; job settings `/srv/forgejo-runner/config.yaml` (on the target, generated) |
+| Container pipeline | `docs/reports/2026-10-11-container-pipeline-build-push-use.md` (test record); target trust file `/etc/docker/certs.d/forgejo.local/forgejo.crt` (recipe change 36); test repositories `agent/container-build-test` and `agent/container-use-test` (on the instance) |
+| Investigation reports | `docs/reports/` — dated records, written once and not maintained afterwards |
 
 ## Entry points
 
@@ -78,7 +83,10 @@ Concrete mapping from `BLUEPRINT.md` components to physical files.
   of application configuration.
 - TLS state on the target: `/srv/forgejo-certs/forgejo.crt` and
   `forgejo.key`. The key never leaves the machine; the `.crt` is copied
-  to `tmp/certs/` (gitignored) for client and CI pinning.
+  to `tmp/certs/` (gitignored) for client and CI pinning, and to
+  `/etc/docker/certs.d/forgejo.local/forgejo.crt` so the Docker daemon
+  trusts the instance's own registry (recipe change 36). The daemon picks
+  these files by extension, so the `.crt` suffix is required.
 - Cleanup state on the target: `/var/lib/forgejo-cleanup/` holds the
   unused-image grace record. It contains image ids and dates only, and
   is never copied into the repo.

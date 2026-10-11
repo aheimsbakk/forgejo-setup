@@ -1,5 +1,26 @@
 # Changelog
 
+## [0.6.0] - 2026-10-11
+
+- **why:** Pipelines could not hand container images to each other. A job can now build an image, push it to the instance registry, and a later job can run inside that image. The Docker daemon performs every job-image pull, so it needed its own copy of the instance certificate.
+- **model:** kompis/qwen3.8-flash-next-iq3_s
+- **tags:** forgejo, registry, actions, buildah, tls
+
+### Added
+
+- Recipe change 36 and reproduce step 20: `/etc/docker/certs.d/forgejo.local/forgejo.crt` on the target, so the Docker daemon trusts the instance's own registry. No daemon restart needed
+- `docs/forgejo-operations.md`: "Container registry (build, push, use)" section, plus footguns for daemon registry trust, the extension-based cert lookup, the Actions token's missing push rights, unprivileged buildah, and the `content` copy trap
+- `docs/reports/2026-10-11-container-pipeline-build-push-use.md`: the full test record. Repositories `agent/container-build-test` and `agent/container-use-test` stay on the instance
+- `docs/memory/archive/`: two warning entries — the Actions token cannot push packages, and buildah needs a rootless uid, `vfs` storage and no `RUN`
+
+### Changed
+
+- `CODEBASE.md`: added the `docs/reports/` component and the container pipeline mapping
+
+### Fixed
+
+- The built image held its payload at the wrong path. `redhat-actions/buildah-build@v3` has no `content-path` input, so the last `content` entry became the destination for the others. The workflow now names `/` explicitly
+
 ## [0.5.0] - 2026-10-10
 
 - **why:** The operator browses many repositories. The default page sizes (20 on explore, 15 on a profile) forced extra clicks, and a larger page costs almost nothing.

@@ -193,3 +193,64 @@ them. The problems found while reaching these results are in
 - Cost check: the listing is one indexed SQL query plus a total count;
   the count does not depend on page size. The only growth is the HTML
   response, which is small on a LAN.
+
+## Host trust for the container registry (change 36)
+
+Test path: build an image inside a job, push it to the instance registry,
+then run a later job inside that image. Repositories
+`agent/container-build-test` and `agent/container-use-test` are kept.
+
+- Before the file: `/etc/docker/certs.d` did not exist on the target and
+  `docker pull forgejo.local/agent/container-build-test:<tag>` failed with
+  `Error response from daemon: Get "https://forgejo.local/v2/": tls:
+  failed to verify certificate: x509: certificate signed by unknown
+  authority`.
+- After the file, with no daemon restart: the same pull succeeded. Final
+  image
+  `forgejo.local/agent/container-build-test:ad049345c1395cc9cc633a208f23ec516fa4c70d`,
+  manifest digest `sha256:81a4c91cb19b0a1493ec6161d9da1b4bfcd11a1bc4706dd1b50741ff53c4b90d`,
+  local id `sha256:8b2bb3bf5d205156b20fc2cf0a0a6baeb754e745afd88243f8345230578faa16`,
+  size 7807650 bytes, entrypoint `[/bin/sh]`.
+- The copy is the same certificate clients hold: SHA-256 fingerprint
+  `54:25:EC:BA:AE:06:45:87:8B:A8:24:A7:BD:20:E0:88:70:E6:2B:5F:41:34:56:A5:94:C2:11:97:BE:C2:D9:A3`
+  on `/etc/docker/certs.d/forgejo.local/forgejo.crt` and on
+  `tmp/certs/forgejo.crt`.
+- File name inside the registry directory, tested with the local image
+  deleted before each pull so the daemon had to reach the registry:
+  no `/etc/docker/certs.d` at all → `x509: certificate signed by unknown
+  authority`;   `forgejo.local/forgejo.crt` → pull succeeded;
+  `forgejo.local/ca.pem` → the same x509 error. The daemon's loader
+  (`registry/registry.go`, `ReadCertsDirectory`) keys on the extension:
+  `*.crt` becomes a trust root, `*.cert`/`*.key` are a client pair, other
+  names are ignored. The directory itself is chosen by host
+  (`HostCertsDir`), and the base `/etc/docker/certs.d` is a compile-time
+  constant on Linux (`registry/config_unix.go`), with no 26.1.5 daemon
+  flag to change it.
+- CI run 41, job 53, after the file was renamed to `forgejo.crt` and every
+  local copy of the image deleted: `docker pull … username=` and the job
+  succeeded inside the image. This is the deployed state.
+- Anonymous pull path — the package is public because the image name
+  matches the public repository `agent/container-build-test`: the manifest
+  request returns 401 with `WWW-Authenticate: Bearer
+  realm="https://forgejo.local/v2/token",service="container_registry",scope="*"`.
+  A token request with no credentials returns a 159-byte token; the
+  manifest and the layer blob then return 200 (blob 3738564 bytes).
+- CI run 40, job `use`, after every local copy of the image was deleted on
+  the target: the log shows `docker pull
+  image=forgejo.local/agent/container-build-test:ad049345… username=
+  forcePull=false` — no credentials — and the job ran inside the image:
+  `/payload.txt` printed `test payload for the container e2e run`,
+  `/greeting.txt` printed `hello from the build context`,
+  `NAME="Alpine Linux"`, `uid=0`.
+- Run 39, same job, showed the runner picking the shell by probing the
+  image: `docker exec cmd=[sh -e …]`, because Alpine has no bash. The
+  runner also replaces the image entrypoint:
+  `entrypoint=["tail" "-f" "/dev/null"]`.
+- Build side, run 38 in `agent/container-build-test`: `buildah` installed
+  in the job, image built with `redhat-actions/buildah-build@v3` in
+  `base-image` + `content` mode, pushed with `buildah push --authfile`.
+  Registry tags after the run: the commit tag and `latest`.
+- Push credential: a repository secret holding a user token. The Actions
+  token authenticates against the registry but cannot write; the measured
+  token payload and the Forgejo source path are recorded in
+  `docs/reports/2026-10-11-container-pipeline-build-push-use.md`.

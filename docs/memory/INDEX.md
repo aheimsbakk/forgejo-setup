@@ -17,3 +17,5 @@
 | DEFAULT_ACTIONS_URL=self: mirrored public repos, cache and node gotchas | decision | medium | forgejo, actions, mirror, runner-cache, node | | archive/2026-10-10-default-actions-url-self.md |
 | Default job image is node:24-bookworm; the label lives in .runner | decision | medium | forgejo, actions, runner, labels, job-image | | archive/2026-10-10-default-job-image-node-lts.md |
 | FORGEJO__ env vars: dotted ini sections need _0X2E_ escape | pattern | medium | forgejo, docker, env-vars, app-ini, pagination | | archive/2026-10-10-env-to-ini-dot-escape.md |
+| Actions token cannot push container images; use a user token secret | warning | high | forgejo, actions, registry, packages, token | | archive/2026-10-11-actions-token-cannot-push-packages.md |
+| buildah in unprivileged job containers: rootless uid, vfs, no RUN | warning | high | forgejo, actions, buildah, job-containers, seccomp | | archive/2026-10-11-buildah-in-unprivileged-job-containers.md |

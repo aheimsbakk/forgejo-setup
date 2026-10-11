@@ -2,8 +2,9 @@
 
 Day-2 notes for the instance installed by
 `docs/forgejo-install-recipe.md`: the problems found, how the Actions
-runner and the backups are set up, and how client devices trust the
-certificate. The measured results behind each change set are in
+runner, the container registry and the backups are set up, and how client
+devices and the Docker daemon trust the certificate. The measured results
+behind each change set are in
 `docs/forgejo-operations-verification.md`.
 
 ## Footguns found
@@ -128,6 +129,83 @@ certificate. The measured results behind each change set are in
 - The runner's action cache (`/srv/forgejo-runner/.cache/act`) is not
   invalidated when `DEFAULT_ACTIONS_URL` changes: cached clones keep
   the old remote. Delete the directory after changing the setting.
+- The Docker daemon has its own registry trust store: files in
+  `/etc/docker/certs.d/<registry-host>/`. The runner's `/etc/ssl/certs`
+  mount and the job containers' `GIT_SSL_CAINFO` /
+  `NODE_EXTRA_CA_CERTS` do not cover it. Without a certificate there, a
+  job whose `container.image` comes from the instance registry fails
+  before any authorization question: `docker pull … tls: failed to
+  verify certificate: x509: certificate signed by unknown authority`.
+  Change 36 put the certificate there as
+  `/etc/docker/certs.d/forgejo.local/forgejo.crt` — the same file name
+  this setup uses elsewhere, not Docker's example name `ca.crt`. No
+  daemon restart is needed.
+- That directory is read by extension, not by fixed name
+  (`registry/registry.go` `ReadCertsDirectory`): `*.crt` is added to the
+  daemon's trust roots, `*.cert`/`*.key` are a client certificate pair
+  and must be paired, and any other name is ignored. Measured on the
+  target: `forgejo.crt` pulls fine, `ca.pem` fails with the same x509
+  error. The suffix is load-bearing; the stem is free. The base directory
+  is a compile-time constant on Linux (`/etc/docker/certs.d`), with no
+  daemon flag to move it in 26.1.5.
+- A 401 from the OCI endpoints is the authentication challenge, not a
+  refusal. `GET /v2/…/manifests/<tag>` returns 401 with a
+  `WWW-Authenticate: Bearer realm="…/v2/token"` header; fetching a token
+  from that realm without credentials returns one, and the manifest and
+  blobs then return 200. Reading the first 401 as "private" is wrong.
+- The Actions token authenticates against the registry (`GET /v2/` with
+  `GITHUB_TOKEN` returns 200) but cannot push. The registry token Forgejo
+  mints for the job carries `UserID:-2` — the built-in `forgejo-actions`
+  user — and an empty `Scope`, and `DeterminePackageAccessMode` gives
+  that user read at most; the function carries the upstream comment
+  `// TODO: ActionUser permission check`. The write permission the
+  Actions token does have on its own repository is implemented in
+  `GetActionRepoPermission`, which only the git HTTP handler calls.
+  Pushing needs a user token with `write:package`, kept in a repository
+  secret.
+- `buildah` inside a job container needs three things: the environment
+  variable `_CONTAINERS_ROOTLESS_UID=1000` (otherwise it re-execs into a
+  user namespace and seccomp returns `unshare(CLONE_NEWUSER): Operation
+  not permitted`), `vfs` storage (`mount()` is EPERM and there is no
+  `/dev/fuse`), and no `RUN` instructions (both isolation modes call
+  `unshare(CLONE_NEWNS)` and fail).
+- `redhat-actions/buildah-build@v3` has no `content-path` input. Its
+  `src/index.ts` calls `cli.copy(containerId, content)`, so the `content`
+  list goes straight to `buildah copy` and buildah reads the **last**
+  entry as the destination. Listing `payload.txt` and `hello/` copied the
+  file into `/hello/` and never copied the directory. Name the
+  destination explicitly as the last entry.
+
+## Container registry (build, push, use)
+
+The instance serves an OCI registry at `/v2/` under the same host and
+certificate as the web UI. A pipeline can build an image, push it there,
+and a later job can run inside it. Verified with the kept repositories
+`agent/container-build-test` (build and push) and
+`agent/container-use-test` (use).
+
+- Build: install `buildah` in the job (`apt-get`) and use
+  `redhat-actions/buildah-build@v3` in `base-image` + `content` mode.
+  `Containerfile` builds with `RUN` do not work in this runner; see the
+  footgun list.
+- Push: `buildah push --authfile <file>`. buildah 1.28 has no
+  `--password-stdin`, and an authfile keeps the token out of the process
+  list. The credential is a user token with `write:package` stored as a
+  repository secret; secrets are set through
+  `PUT /api/v1/repos/<owner>/<repo>/actions/secrets/<NAME>` with
+  plaintext `data` (this instance has no public-key route: that path
+  answers 405).
+- Use: `jobs.<id>.container.image: forgejo.local/<owner>/<repo>:<tag>`.
+  The host daemon pulls it, so change 36 is required. No
+  `container.credentials` are needed when the package is public, which it
+  is by inheritance from the repository the image name matches.
+- Job image consequences: the runner replaces the image entrypoint with
+  `tail -f /dev/null` and picks the shell by probing the image, so a
+  bash-free image such as Alpine runs steps with `sh -e`. An image
+  without git or node cannot run JavaScript actions or `actions/checkout`.
+- Pin job images by tag rather than digest: the registry serves Docker
+  v2 manifests and reports a `Docker-Content-Digest` that differs from
+  the local image id.
 
 ## CI runner (same box)
 

@@ -83,6 +83,14 @@ script loads `.env` and only prompts for what is missing.
   `[ui]`, `REPO_PAGING_NUM=50` in `[ui.user]`; defaults are 20 and 15).
   A repository listing is one indexed SQL query plus a total count, so
   a larger page only makes the HTML response bigger.
+- The instance registry is part of the pipeline: a job builds an image,
+  pushes it to `forgejo.local/<owner>/<repo>`, and a later job runs
+  inside it. Two things follow. The Docker daemon on the host must trust
+  the instance certificate for its own registry
+  (`/etc/docker/certs.d/forgejo.local/forgejo.crt`, change 36), because the
+  daemon performs every job-image pull. And pushing needs a user token
+  with `write:package` kept in a repository secret: the Actions token
+  authenticates against the registry but cannot write packages.
 
 ## Changes applied (first run, anonymized)
 
@@ -123,6 +131,7 @@ script loads `.env` and only prompts for what is missing.
 | 33 | 2026-10-10 | Default job image switched from `debian:bookworm` to `node:20-bookworm`: the runner's registration label in `/srv/forgejo-runner/.runner` changed to `docker:docker://node:20-bookworm` (runner id and token kept) | `sed -i` on the label line of `/srv/forgejo-runner/.runner`; `docker restart forgejo-runner` | runner log `declared successfully`; smoke run 21 `success` with `runs-on: docker` and no `container.image`: log shows `Start image=node:20-bookworm`, `actions/checkout@v4` ran (git 2.39.5), `node --version` printed `v20.20.2`; repo deleted after |
 | 34 | 2026-10-10 | Default job image moved to the Active LTS line: label `docker:docker://node:24-bookworm` — Node 20 reached end-of-life 2026-04-30, its image is frozen at 20.20.2 and gets no security fixes | `sed -i` on the label line of `/srv/forgejo-runner/.runner`; `docker restart forgejo-runner` | runner log `declared successfully`; smoke run 22 `success`: `Start image=node:24-bookworm`, `node --version` printed `v24.21.0`, `actions/checkout@v4` ran (git 2.39.5); repo deleted after; `node:20-bookworm` now unused and will be reclaimed by the daily cleanup after its grace period |
 | 35 | 2026-10-10 | Browsing pagination raised to 50 repos per page: `FORGEJO__ui__EXPLORE_PAGING_NUM=50` and `FORGEJO__ui_0X2E_user__REPO_PAGING_NUM=50` in the compose file (`_0X2E_` is the environment-to-ini escape for the dot in the `[ui.user]` section) | copy updated `forgejo/docker-compose.yml`; `cd /opt/forgejo && docker-compose up -d` | `app.ini` shows `EXPLORE_PAGING_NUM = 50` in `[ui]` and `REPO_PAGING_NUM = 50` in `[ui.user]`; the explore page and the user profile page each render 50 repo cards |
+| 36 | 2026-10-11 | Docker on the host trusts the instance's own registry: `/etc/docker/certs.d/forgejo.local/forgejo.crt`, a copy of `/srv/forgejo-certs/forgejo.crt`. The daemon pulls every job image, including images the pipeline pushed to the instance registry, and it reads its trust from this directory, not from the runner's `/etc/ssl/certs` mount. The file keeps the `forgejo.crt` name used everywhere else in this setup; the daemon selects these files by extension, so the `.crt` suffix is required and `ca.crt` is only Docker's documented example name | `mkdir -p /etc/docker/certs.d/forgejo.local && cp /srv/forgejo-certs/forgejo.crt /etc/docker/certs.d/forgejo.local/forgejo.crt` (mode 644; no daemon restart needed) | `docker pull forgejo.local/agent/container-build-test:<tag>` succeeds after the local copy is deleted; before the file the same command failed with `x509: certificate signed by unknown authority`, and the same copy renamed to `ca.pem` fails the same way; the file's SHA-256 certificate fingerprint matches `tmp/certs/forgejo.crt`; CI run 40 then pulled the image with `username=` (no credentials) and the job ran inside it |
 
 Operator-side change (not on the target): the target address was added
 to the operator's `known_hosts` by `StrictHostKeyChecking=accept-new`.
@@ -133,6 +142,9 @@ to the operator's `known_hosts` by `StrictHostKeyChecking=accept-new`.
   backup setup, and how client devices trust the certificate.
 - `docs/forgejo-operations-verification.md` — what each change set was
   checked against, with the observed output.
+- `docs/reports/` — dated records of investigations, kept as history and
+  not maintained afterwards. The container pipeline record is
+  `docs/reports/2026-10-11-container-pipeline-build-push-use.md`.
 
 ## Reproduce (full recipe)
 
@@ -301,5 +313,22 @@ $SSH 'chmod +x /opt/forgejo/cleanup.sh && cp /opt/forgejo/forgejo-cleanup.{servi
 
 # 19. Test one cleanup run and confirm the timer is armed
 $SSH 'systemctl start forgejo-cleanup.service && systemctl list-timers forgejo-cleanup.timer'
+
+# 20. Docker registry trust on the host (change 36). The Docker daemon
+# pulls every job image, so it must verify the instance certificate when
+# a pipeline pushes an image to the instance registry and a later job
+# uses it. The daemon reads per-registry trust from
+# /etc/docker/certs.d/<registry>/; the runner's /etc/ssl/certs mount
+# covers the runner's Go client and the job containers, not the daemon.
+# No daemon restart is needed. Files in that directory are picked by
+# extension: *.crt is trusted as a registry CA, *.cert/*.key are the
+# client certificate pair, anything else is ignored. The name therefore
+# only has to end in .crt — keep it forgejo.crt, the name this setup
+# uses for the same certificate everywhere else.
+$SSH 'mkdir -p /etc/docker/certs.d/forgejo.local && cp /srv/forgejo-certs/forgejo.crt /etc/docker/certs.d/forgejo.local/forgejo.crt && chmod 644 /etc/docker/certs.d/forgejo.local/forgejo.crt'
+# Probe without an image in the registry: an x509 error means the trust
+# file is missing, misnamed (no .crt suffix) or wrong; "manifest unknown"
+# or 401 means TLS passed.
+$SSH 'docker pull forgejo.local/library/does-not-exist:latest 2>&1 | tail -1'
 ```
 
