@@ -1,5 +1,5 @@
 # Forgejo, LAN-only HTTPS. All Forgejo configuration lives here as
-# FORGEJO__* environment variables. See docs/forgejo-install-recipe.md.
+# FORGEJO__* environment variables. See docs/forgejo-install-steps.md.
 # LAN_IP comes from the .env file next to this compose file. The TLS
 # certificate is created on the target by gen-cert.sh and lives in
 # /srv/forgejo-certs, outside the data dir so dumps never contain the key.
@@ -55,6 +55,13 @@ services:
       - FORGEJO__server__SSH_LISTEN_PORT=2222
       # Skip the web install wizard; config is fully defined here.
       - FORGEJO__security__INSTALL_LOCK=true
+      # Global key for the data Forgejo encrypts at rest (two-factor
+      # seeds, login source config). The instance ran with it empty, and
+      # dumps blank it on purpose. Keeping the value in a file outside the
+      # data dir means it is in no dump and not in this tracked file.
+      # SECRET_KEY_URI and SECRET_KEY must not both have a value; Forgejo
+      # exits at startup if they do.
+      - FORGEJO__security__SECRET_KEY_URI=file:/etc/forgejo/secret_key
       # LAN instance: accounts are created by the admin via CLI.
       - FORGEJO__service__DISABLE_REGISTRATION=true
       # Actions: "uses: actions/checkout@v4" (no host) is fetched from
@@ -74,6 +81,12 @@ services:
     volumes:
       - /srv/forgejo:/data
       - /srv/forgejo-certs:/etc/forgejo/certs:ro
+      # Read-only single-file mount, so the key stays out of /data and out
+      # of every dump. Host side: /opt/forgejo/secrets is mode 750 and the
+      # file mode 640 root:1000, which is how the container's uid 1000
+      # reads it. Losing this file makes already-encrypted values
+      # unreadable, so it needs its own backup.
+      - /opt/forgejo/secrets/secret_key:/etc/forgejo/secret_key:ro
       - /etc/timezone:/etc/timezone:ro
       - /etc/localtime:/etc/localtime:ro
 
