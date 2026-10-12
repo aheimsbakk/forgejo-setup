@@ -18,7 +18,7 @@ is documented there. Test repositories are kept, not deleted.
 
 | Item | Value |
 |---|---|
-| Instance | `https://forgejo.local/` (LAN `192.168.1.40`), Forgejo `16.0.5+gitea-1.22.0` |
+| Instance | `https://forgejo.local/` (LAN `<IP>`), Forgejo `16.0.5+gitea-1.22.0` |
 | Operator access | API token for user `agent` (id 2), SSH root to the target |
 | Runner | `forgejo-runner` 13.1.0, same box, label `docker:docker://node:24-bookworm`, capacity 2, job containers `--memory=1g --cpus=1`, `privileged: false`, no Docker socket in jobs |
 | Actions source | `DEFAULT_ACTIONS_URL=self`; mirrored action repos must exist on the instance |

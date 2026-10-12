@@ -62,7 +62,7 @@ reaching these results are in `docs/forgejo-footguns.md`.
 
 - `getent ahostsv4 forgejo.local` inside a job container returns the LAN
   address alone. Without the option the same lookup returns every
-  address of the machine: `192.168.1.40 172.18.0.1 172.17.0.1` on a
+  address of the machine: `<IP> 172.18.0.1 172.17.0.1` on a
   user-defined network, and nothing at all on the default bridge.
   `resolvectl query forgejo.local` on the host reports
   `Data from: synthetic` for the same reason.
