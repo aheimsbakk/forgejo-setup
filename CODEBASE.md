@@ -32,6 +32,8 @@ Concrete mapping from `BLUEPRINT.md` components to physical files.
 │   │   └── 2026-10-11-container-pipeline-build-push-use.md
 │   │                                build -> push -> use test record
 │   └── memory/                      agent session memory (INDEX.md, archive/)
+├── tasks/                           proposed future work, not implemented
+│   └── multiarch-buildah-builds.md  multi-architecture buildah builds
 ├── forgejo/                         service configuration component
 │   ├── docker-compose.yml           Forgejo app + Actions runner definitions
 │   ├── .env.example                 per-target LAN address template
@@ -62,6 +64,7 @@ Concrete mapping from `BLUEPRINT.md` components to physical files.
 | CI runner | `forgejo/docker-compose.yml` (runner service), recipe changes 14–17, 20–23 and 27; job settings `/srv/forgejo-runner/config.yaml` (on the target, generated) |
 | Container pipeline | `docs/reports/2026-10-11-container-pipeline-build-push-use.md` (test record); target trust file `/etc/docker/certs.d/forgejo.local/forgejo.crt` (recipe change 36); test repositories `agent/container-build-test` and `agent/container-use-test` (on the instance) |
 | Investigation reports | `docs/reports/` — dated records, written once and not maintained afterwards |
+| Future work proposals | `tasks/` — not implemented, not part of the deployed state |
 
 ## Entry points
 
