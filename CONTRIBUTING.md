@@ -20,6 +20,8 @@ Developer guide for this repo. User-facing product notes are in
 - `docs/forgejo-backup-restore-verification.md` — the same for the backup
   script, the dump format, the restore drill and the global encryption
   key.
+- `tasks/` — proposed future work. Not implemented, and not part of the
+  state deployed to a target machine.
 - `forgejo/` — files deployed to a target machine under `/opt/forgejo/`.
 - `.env` — real parameters (`IP`, `ADMIN_USER`, `ADMIN_PASSWORD`, `KEY`)
   for the current deployment. Gitignored, mode 600. Never commit it.

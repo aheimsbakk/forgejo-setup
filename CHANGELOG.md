@@ -1,5 +1,21 @@
 # Changelog
 
+## [0.8.0] - 2026-10-17
+
+- **why:** Multi-architecture image builds came up as future work. The findings were measured on the target and written down as a task, so the decision can be picked up later without measuring the host again. No change was made to the target.
+- **model:** kompis/qwen3.8-flash-next-iq3_s
+- **tags:** forgejo, actions, buildah, multiarch, documentation
+
+### Added
+
+- `tasks/multiarch-buildah-builds.md`: the proposed task. It records the host measurements, the finding that building for another architecture needs no host change in the no-`RUN` build shape, two scopes (publish several architectures, versus also run a foreign-architecture image), five open questions and five ordered steps
+- `docs/memory/archive/2026-10-17-multiarch-buildah-no-host-change.md`: cross-architecture builds need no emulation because buildah never runs a binary from the image being built; running a foreign-architecture image needs QEMU registered on the host, and Debian's entries name an interpreter path that must also exist inside the job container
+
+### Changed
+
+- `docs/memory/INDEX.md`: one new row for the entry above
+- `.gitignore`: `.ssh/` is ignored, so a `known_hosts` file written by an ssh call stays out of the repository
+
 ## [0.7.0] - 2026-10-11
 
 - **why:** Backups carried rebuildable container images, the instance had no global encryption key, and the documented restore procedure did not match what Forgejo 16.0.5 dumps contain.

@@ -22,3 +22,4 @@
 | buildah in unprivileged job containers: rootless uid, vfs, no RUN | warning | high | forgejo, actions, buildah, job-containers, seccomp | | archive/2026-10-11-buildah-in-unprivileged-job-containers.md |
 | Forgejo dump restore: no restore.sh, blanked SECRET_KEY, git/.ssh owner | warning | high | forgejo, backup, restore, sqlite, secret-key | | archive/2026-10-11-forgejo-dump-restore-footguns.md |
 | Two-factor on an account blocks all /api/v1 basic auth | warning | medium | forgejo, api, basic-auth, two-factor | | archive/2026-10-11-two-factor-blocks-basic-auth.md |
+| Multi-arch buildah builds need no host change; only the manifest list is unproven | pattern | medium | forgejo, actions, buildah, multiarch, binfmt | | archive/2026-10-17-multiarch-buildah-no-host-change.md |
