@@ -20,7 +20,7 @@ script loads `.env` and only prompts for what is missing.
 | `LAN_RESOLVER` | DNS server used by containers | `192.0.2.1` |
 | `ADMIN_USER` | Forgejo admin account | `admin` |
 | `ADMIN_PASSWORD` | Forgejo admin password; never committed | (set in `.env`) |
-| `KEY` | SSH private key path | `tmp/ssh/id_ed2219` |
+| `KEY` | SSH private key path | `tmp/ssh/id_ed22519` |
 
 ## Baseline (observed before changes)
 
