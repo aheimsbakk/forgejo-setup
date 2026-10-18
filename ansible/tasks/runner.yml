@@ -1,0 +1,93 @@
+---
+# Actions runner: registration state and job configuration. Tag: runner.
+# Registration needs admin credentials and only runs when the runner is
+# not yet registered; a running instance keeps its registration.
+
+- name: Read the runner registration state
+  ansible.builtin.stat:
+    path: "{{ runner_dir }}/.runner"
+  register: runner_reg
+
+- name: Require admin credentials when the runner is not registered
+  ansible.builtin.assert:
+    that: forgejo_admin_password is defined
+    fail_msg: >-
+      {{ runner_dir }}/.runner is missing, so the runner must be
+      registered. Re-run with forgejo_admin_user and
+      forgejo_admin_password set (see hosts.yml.example).
+    success_msg: runner is registered
+  when: not runner_reg.stat.exists
+
+- name: Fetch the runner registration token on the target  # noqa: command-instead-of-module
+  ansible.builtin.command: >-
+    curl -s --cacert {{ cert_file }}
+    -u '{{ forgejo_admin_user }}:{{ forgejo_admin_password }}'
+    https://{{ lan_ip }}/api/v1/admin/runners/registration-token
+  changed_when: false
+  no_log: true
+  when: not runner_reg.stat.exists
+  register: reg_response
+
+- name: Register the runner (first time only)
+  ansible.builtin.shell: >
+    set -e;
+    podman run --rm -v {{ runner_dir }}:/data {{ runner_image }}
+    forgejo-runner generate-config > {{ runner_dir }}/config.yaml;
+    podman run --rm -v {{ runner_dir }}:/data {{ runner_image }}
+    forgejo-runner register --config /data/config.yaml
+    --instance https://{{ lan_name }}/ --token '{{ reg_token }}'
+    --labels '{{ runner_job_label }}' --no-interactive
+  changed_when: true
+  vars:
+    reg_token: "{{ (reg_response.stdout | from_json).token }}"
+  no_log: true
+  when: not runner_reg.stat.exists
+
+- name: Deploy the runner job configuration
+  ansible.builtin.template:
+    src: runner-config.yaml.j2
+    dest: "{{ runner_dir }}/config.yaml"
+    mode: '0644'
+  register: runner_config
+
+- name: Start and enable the runner pod
+  ansible.builtin.systemd:
+    name: podman-kube@opt-forgejo-kube-runner.yaml.service
+    enabled: true
+    state: started
+
+- name: Restart the runner pod after a configuration change  # noqa: no-handler
+  ansible.builtin.systemd:
+    name: podman-kube@opt-forgejo-kube-runner.yaml.service
+    state: restarted
+  when: runner_config.changed
+
+- name: Read the runner job configuration for verification
+  ansible.builtin.command: >-
+    grep -cE '^  capacity: {{ runner_capacity }}$|add-host={{ lan_name }}:|NODE_EXTRA_CA_CERTS:|^  valid_volumes:|^  env_file: ""$'
+    {{ runner_dir }}/config.yaml
+  changed_when: false
+  check_mode: false
+  register: runner_cfg_check
+
+- name: Assert the job configuration carries every mitigation
+  ansible.builtin.assert:
+    that: runner_cfg_check.stdout == '5'
+    fail_msg: >-
+      {{ runner_dir }}/config.yaml is missing one of the required
+      settings (capacity, name pin, CA variables, valid_volumes,
+      env_file off); the template did not apply
+
+- name: Assert the sample job environment entries are gone
+  ansible.builtin.command: "grep -q A_TEST_ENV_NAME {{ runner_dir }}/config.yaml"
+  changed_when: false
+  check_mode: false
+  failed_when: runner_sample_env.rc not in [0, 1]
+  register: runner_sample_env
+
+- name: Fail when sample job environment entries remain
+  ansible.builtin.assert:
+    that: runner_sample_env.rc == 1
+    fail_msg: >-
+      generate-config sample entries (A_TEST_ENV_NAME_*) are still in
+      {{ runner_dir }}/config.yaml; the runner passes them to every job

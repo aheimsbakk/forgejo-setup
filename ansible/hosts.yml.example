@@ -1,0 +1,20 @@
+# Parameter store template. Copy to hosts.yml (gitignored) and fill in
+# the real values for your target. hosts.yml is the per-deployment
+# parameter store: address, resolver and SSH key never get committed.
+#
+# Host variables here override the placeholders in group_vars/all.yml.
+all:
+  hosts:
+    forgejo:
+      ansible_host: 192.0.2.40
+      ansible_user: root
+      # Absolute path to the SSH private key with root access.
+      ansible_private_key_file: /home/you/.ssh/id_ed25519
+      # LAN address the instance serves on; ports bind to it.
+      lan_ip: 192.0.2.40
+      # DNS server containers use (the LAN resolver, not the host stub).
+      lan_resolver: 192.0.2.1
+      # Uncomment when the admin account is needed (fresh installs:
+      # admin creation and runner registration):
+      # forgejo_admin_user: admin
+      # forgejo_admin_password: change-me

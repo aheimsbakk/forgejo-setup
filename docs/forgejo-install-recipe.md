@@ -10,17 +10,18 @@ anonymized in this document; supply your own values when reusing it.
 
 ## Parameters (ask the operator before starting)
 
-Real values for the current deployment live in the repo-root `.env`
-(gitignored, mode 600). Copy `.env.example` to start. The reproduce
-script loads `.env` and only prompts for what is missing.
+Real values for the current deployment live in `ansible/hosts.yml`
+(gitignored). Copy `ansible/hosts.yml.example` to start. The playbook
+reads the address, resolver and key path from there; non-secret
+settings are in `ansible/group_vars/all.yml`.
 
 | Parameter | Used for | Example (documentation range) |
 |-----------|----------|-------------------------------|
-| `IP` | target address, port bindings, name pins | `192.0.2.40` |
-| `LAN_RESOLVER` | DNS server used by containers | `192.0.2.1` |
-| `ADMIN_USER` | Forgejo admin account | `admin` |
-| `ADMIN_PASSWORD` | Forgejo admin password; never committed | (set in `.env`) |
-| `KEY` | SSH private key path | `tmp/ssh/id_ed22519` |
+| `lan_ip` | target address, port bindings, name pins | `192.0.2.40` |
+| `lan_resolver` | DNS server used by containers | `192.0.2.1` |
+| `forgejo_admin_user` | Forgejo admin account (fresh installs) | `admin` |
+| `forgejo_admin_password` | admin password; never committed | (set in `hosts.yml`) |
+| `ansible_private_key_file` | SSH private key path | `/home/you/.ssh/id_ed25519` |
 
 ## Baseline (observed before changes)
 
@@ -54,10 +55,11 @@ script loads `.env` and only prompts for what is missing.
   the host also has a public IPv6 address.
 - Storage: bind mount `/srv/forgejo` on the host to `/data` in the
   container; built-in SQLite; no separate database server.
-- All Forgejo configuration lives in `forgejo/kube/forgejo.yaml` as
-  `FORGEJO__*` environment variables. The LAN address is written into
-  the YAML literally (podman kube play has no variable interpolation);
-  `/opt/forgejo/.env` keeps it for `gen-cert.sh`.
+- All Forgejo configuration lives in the app pod definition
+  (`ansible/templates/kube/forgejo.yaml.j2`) as `FORGEJO__*`
+  environment variables. The playbook generates the deployed YAML with
+  the LAN address written in (podman kube play has no variable
+  interpolation); `/opt/forgejo/.env` keeps it for `gen-cert.sh`.
 - The hostname is `forgejo`, so the mDNS name is `forgejo.local`. That
   name appears in six places: the hostname, the certificate subject
   alternative names, the pod `hostAliases` pin, the runner's
@@ -154,14 +156,15 @@ script loads `.env` and only prompts for what is missing.
 | 45 | 2026-10-18 | Docker removed: containers stopped, packages `docker.io`, `docker-compose`, `containerd`, `runc` purged, `/var/lib/docker` and `/etc/docker` deleted, `FORWARD` policy set to ACCEPT (Docker had set DROP; netavark relies on ACCEPT plus its own nft table). During the coexistence window Docker's `FORWARD` DROP also blocked podman bridge traffic — a temporary `DOCKER-USER` accept for podman's 10/8 space was needed and is gone with the engine | `systemctl disable --now docker`; `apt-get purge -y docker.io docker-compose containerd runc && apt-get autoremove -y`; `rm -rf /var/lib/docker /etc/docker`; `iptables -P FORWARD ACCEPT` | `which docker` empty; only the `inet netavark` nft table remains; full verification re-run green (web, redirect, SSH, runner declared, checklist and use-image CI runs success); new containers use `crun` |
 | 46 | 2026-10-18 | Runner `env_file` turned off. `generate-config` sets `env_file: .env`, and with no such file in the daemon's working directory the first log line at every start is `Missing env file ".env" is ignored` (warning; the runner declares normally). Job environment comes from `container.envs`, so the file is not wanted; an empty value means the runner does not look | `sed` on the `env_file` key of `/srv/forgejo-runner/config.yaml` (backup kept at `/root/forgejo-runner-config.yaml.2026-10-18.bak`, mode 600); restart the runner unit | runner log starts at `Starting runner daemon`, no warning, then `declared successfully` and `[poller] launched`; unit `active` |
 | 47 | 2026-10-18 | Sample job environment removed from the runner config. `generate-config` leaves `A_TEST_ENV_NAME_1: a_test_env_value_1` and `A_TEST_ENV_NAME_2: a_test_env_value_2` under `container.envs`, and the runner passes every `envs` entry into job containers | delete the two lines from `/srv/forgejo-runner/config.yaml` (backup kept at `/root/forgejo-runner-config.yaml.2026-10-18-2.bak`, mode 600); restart the runner unit | `grep` finds no `A_TEST_ENV_NAME` entry; `GIT_SSL_CAINFO` and `NODE_EXTRA_CA_CERTS` still listed; runner log `declared successfully` and `[poller] launched` |
+| 48 | 2026-10-18 | Deployment moved to the Ansible playbook (`ansible/site.yml`); the playbook applied its templates to the live target. Files changed on the target: `/etc/containers/containers.conf` (comment wording only), `/opt/forgejo/gen-cert.sh` (comment wording only), `/srv/forgejo-runner/config.yaml` (header comment; values identical), runner pod restarted once during the first apply | `ansible-playbook site.yml` from the operator control node | second apply `changed=0`; `--tags verify` green (backup dump without registry blobs, cleanup ran, registry-trust probe passed, timers enabled); `--check` after apply `changed=0` |
 
 Operator-side change (not on the target): the target address was added
 to the operator's `known_hosts` by `StrictHostKeyChecking=accept-new`.
 
 ## Related documents
 
-- `docs/forgejo-install-steps.md` — the commands, in order, that rebuild
-  the instance on a fresh machine.
+- `docs/forgejo-install-steps.md` — how to run the Ansible playbook
+  that rebuilds and converges the instance.
 - `docs/forgejo-footguns.md` — the problems found, each with the symptom
   and the fix.
 - `docs/forgejo-ci-and-registry.md` — the Actions runner, the container
@@ -184,9 +187,11 @@ to the operator's `known_hosts` by `StrictHostKeyChecking=accept-new`.
 
 ## Reproduce
 
-The commands, in order, are in `docs/forgejo-install-steps.md`. Ask the
-operator for the parameters first; the script prompts for the password so
-it never lands in shell history or this repo. The change table records the
-first target's move from HTTP to HTTPS as changes 18-23 and from Docker
-to podman as changes 39-45; the files in this repo are already in the
-final state, so the steps reach it on a fresh machine in one pass.
+The playbook in `ansible/` is the reproduce procedure; run it as
+described in `docs/forgejo-install-steps.md`. Set the parameters in
+`ansible/hosts.yml` first; the admin password is only needed on a
+fresh machine and never lands in a tracked file. The change table
+records the first target's move from HTTP to HTTPS as changes 18-23
+and from Docker to podman as changes 39-45; the templates and scripts
+in this repo are already in the final state, so the playbook reaches
+it on a fresh machine in one pass.

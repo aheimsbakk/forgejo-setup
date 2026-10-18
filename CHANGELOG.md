@@ -1,5 +1,34 @@
 # Changelog
 
+## [0.10.0] - 2026-10-18
+
+- **why:** The install procedure was a 230-line bash recipe an operator ran by hand. An idempotent Ansible playbook converges the same state, proves it with `--check` before touching anything, and re-runs clean on a converged system.
+- **model:** kompis/qwen3.8-flash-next-iq3_s
+- **tags:** ansible, deploy, idempotency, docs
+
+### Added
+
+- `ansible/site.yml` and `ansible/tasks/{base,forgejo,runner,verify}.yml`: the playbook, split by tag; `verify` is opt-in (`--tags verify`)
+- `ansible/templates/`: Jinja2 sources for the two kube YAMLs, `containers.conf` and the runner `config.yaml`; `ansible/files/`: scripts and systemd units deployed verbatim
+- `ansible/hosts.yml.example` and `ansible/group_vars/all.yml`: parameter store and tracked settings; the real `ansible/hosts.yml` stays untracked
+- `ansible/requirements.txt` (`ansible-core==2.21.5`) and `ansible/requirements-lint.txt` (`ansible-lint==26.10.1`)
+- Recipe change 48: the playbook applied to the live target; second apply `changed=0`, `--tags verify` green
+
+### Changed
+
+- `docs/forgejo-install-steps.md` is now a runbook: setup, `--check --diff`, apply, verify, tags
+- `BLUEPRINT.md`, `CODEBASE.md`, `README.md`, `CONTRIBUTING.md` and the recipe describe the playbook architecture
+- `scripts/verify_codebase_sync.sh` also validates `ansible/`, `templates/` and `tasks/` paths
+
+### Removed
+
+- `forgejo/`: scripts, units, kube YAMLs and `containers.conf` moved into `ansible/files/` and `ansible/templates/` (single source of truth)
+
+### Fixed
+
+- Playbook bugs found while converging the live target: trailing tasks in imported files are not handlers (pods would restart every pass); `verify` needed the `never` tag to stay opt-in; `command` does not expand globs; admin account creation task added
+
+
 ## [0.9.0] - 2026-10-18
 
 - **why:** The stack ran on Docker Compose, which gave runner job containers no user namespace and put a second engine on a machine already running podman. The move to podman pod definitions fixes both. Two defects in the runner's generated config were fixed in the same pass.

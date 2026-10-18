@@ -1,5 +1,8 @@
 tmp/
 .env
 .ssh/
+.venv/
+ansible/hosts.yml
+.vscode/
 
 todo.txt

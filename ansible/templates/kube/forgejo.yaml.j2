@@ -15,20 +15,20 @@ spec:
   # not reach container networks, so the name must resolve from the
   # pod's own /etc/hosts. Same pin the compose extra_hosts had.
   hostAliases:
-    - ip: "192.0.2.40"
+    - ip: "{{ lan_ip }}"
       hostnames:
         - "forgejo.local"
   containers:
     - name: forgejo
       # Pinned stable release. Bump deliberately; never use :latest.
-      image: codeberg.org/forgejo/forgejo:16.0.5
+      image: {{ forgejo_image }}
       # Bound to the LAN IPv4 address only. The host also has a public
       # IPv6 address; omitting hostIP would expose Forgejo there.
       # hostIP on containerPort is honored by podman kube play
       # (measured 2026-10-18).
       ports:
         - containerPort: 3000
-          hostIP: "192.0.2.40"
+          hostIP: "{{ lan_ip }}"
           hostPort: 443
         # The redirector listens on 8080 inside the container, not 80:
         # the Forgejo server runs as uid 1000 and podman leaves
@@ -36,10 +36,10 @@ spec:
         # 0 in the container namespace), so binding 80 inside the
         # container fails with EACCES. The host still publishes 80.
         - containerPort: 8080
-          hostIP: "192.0.2.40"
+          hostIP: "{{ lan_ip }}"
           hostPort: 80
         - containerPort: 2222
-          hostIP: "192.0.2.40"
+          hostIP: "{{ lan_ip }}"
           hostPort: 2222
       env:
         # Match the owner of the /srv/forgejo bind mount on the host.

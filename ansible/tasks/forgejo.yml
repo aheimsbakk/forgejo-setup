@@ -1,0 +1,227 @@
+---
+# Service definitions, certificate, encryption key, pods, timers and
+# engine registry trust. Tag: forgejo.
+
+- name: Deploy the Forgejo app pod definition
+  ansible.builtin.template:
+    src: kube/forgejo.yaml.j2
+    dest: "{{ opt_dir }}/kube/forgejo.yaml"
+    mode: '0644'
+  register: forgejo_pod_yaml
+
+- name: Deploy the runner pod definition
+  ansible.builtin.template:
+    src: kube/runner.yaml.j2
+    dest: "{{ opt_dir }}/kube/runner.yaml"
+    mode: '0644'
+  register: runner_pod_yaml
+
+- name: Write the deployment address record for gen-cert.sh
+  ansible.builtin.copy:
+    dest: "{{ opt_dir }}/.env"
+    content: "LAN_IP={{ lan_ip }}\n"
+    mode: '0600'
+
+- name: Deploy the operational scripts
+  ansible.builtin.copy:
+    src: "files/{{ item }}"
+    dest: "{{ opt_dir }}/{{ item }}"
+    mode: '0755'
+  loop: [backup.sh, cleanup.sh, gen-cert.sh]
+
+- name: Deploy the backup and cleanup units
+  ansible.builtin.copy:
+    src: "files/{{ item }}"
+    dest: "/etc/systemd/system/{{ item }}"
+    mode: '0644'
+  loop:
+    - forgejo-backup.service
+    - forgejo-backup.timer
+    - forgejo-cleanup.service
+    - forgejo-cleanup.timer
+  register: systemd_units
+
+- name: Create or keep the self-signed certificate
+  ansible.builtin.command: "{{ opt_dir }}/gen-cert.sh"
+  changed_when: "'created' in cert_run.stdout"
+  register: cert_run
+
+- name: Read the certificate for verification
+  ansible.builtin.command: >-
+    openssl x509 -in {{ cert_file }} -noout -checkend 0 -ext subjectAltName
+  changed_when: false
+  check_mode: false
+  register: cert_check
+
+- name: Assert the certificate covers this deployment
+  ansible.builtin.assert:
+    that:
+      - cert_check.rc == 0
+      - lan_ip in cert_check.stdout
+      - lan_name in cert_check.stdout
+    fail_msg: >-
+      {{ cert_file }} is missing, expired, or does not name both
+      {{ lan_ip }} and {{ lan_name }}; re-run this tag without --check to
+      create it, then re-pin every client
+
+- name: Fetch the public certificate for client and CI pinning
+  ansible.builtin.fetch:
+    src: "{{ cert_file }}"
+    dest: "../tmp/certs/forgejo.crt"
+    flat: true
+  check_mode: false
+
+- name: Create the secrets directory
+  ansible.builtin.file:
+    path: "{{ secrets_dir }}"
+    state: directory
+    mode: '0750'
+
+- name: Generate the global encryption key (first time only)
+  ansible.builtin.shell: >
+    podman run --rm --entrypoint /usr/local/bin/forgejo {{ forgejo_image }}
+    generate secret SECRET_KEY > {{ secrets_dir }}/secret_key
+  args:
+    creates: "{{ secrets_dir }}/secret_key"
+  no_log: true
+
+- name: Read the encryption key state
+  ansible.builtin.stat:
+    path: "{{ secrets_dir }}/secret_key"
+  register: secret_key
+
+- name: Assert the encryption key exists
+  ansible.builtin.assert:
+    that: secret_key.stat.exists
+    fail_msg: >-
+      {{ secrets_dir }}/secret_key is missing; the app pod exits without
+      it. Re-run this tag without --check to generate it
+
+- name: Set encryption key ownership and mode
+  ansible.builtin.file:
+    path: "{{ secrets_dir }}/secret_key"
+    owner: root
+    group: "{{ container_user }}"
+    mode: '0640'
+
+- name: Start and enable the pod units
+  ansible.builtin.systemd:
+    name: "podman-kube@opt-forgejo-kube-{{ item }}.yaml.service"
+    enabled: true
+    state: started
+  loop: [forgejo, runner]
+
+- name: List existing accounts
+  ansible.builtin.command: podman exec -u 1000 forgejo-forgejo forgejo admin user list
+  changed_when: false
+  register: account_list
+
+- name: Create the admin account (first time only)
+  # Credentials come from hosts.yml; without them this task is skipped,
+  # which is correct for a running instance. The email placeholder uses
+  # .invalid (RFC 6761): .local is reserved for mDNS.
+  ansible.builtin.command: >-
+    podman exec -u 1000 forgejo-forgejo forgejo admin user create
+    --username {{ forgejo_admin_user }}
+    --password '{{ forgejo_admin_password }}'
+    --email {{ forgejo_admin_user }}@forgejo.invalid --admin
+  changed_when: true
+  no_log: true
+  when:
+    - forgejo_admin_password is defined
+    - account_list.stdout is defined
+    - forgejo_admin_user not in account_list.stdout
+
+- name: Start and enable the timer units
+  ansible.builtin.systemd:
+    name: "{{ item }}"
+    enabled: true
+    state: started
+  loop: [forgejo-backup.timer, forgejo-cleanup.timer]
+
+- name: Make the engine trust the instance registry
+  ansible.builtin.copy:
+    src: "{{ cert_file }}"
+    remote_src: true
+    dest: "/etc/containers/certs.d/{{ lan_name }}/forgejo.crt"
+    mode: '0644'
+
+- name: Read the listening sockets
+  ansible.builtin.command: ss -tln
+  changed_when: false
+  check_mode: false
+  register: listeners
+
+- name: Assert the published ports bind to the LAN address only
+  ansible.builtin.assert:
+    that:
+      - listeners.stdout_lines | select('search', ':(443|80|2222)(\s|$)') | select('search', lan_ip ~ ':') | list | length == 3
+      - listeners.stdout_lines | select('search', ':(443|80|2222)(\s|$)') | reject('search', lan_ip ~ ':') | list | length == 0
+    fail_msg: >-
+      ports 443, 80 and 2222 must all bind to {{ lan_ip }} and nowhere
+      else; ss -tln disagrees
+
+# The uri module would connect from the control node and need the
+# certificate there; these checks run on the target instead.
+- name: Read the HTTPS status code on the target  # noqa: command-instead-of-module
+  ansible.builtin.command: >-
+    curl -s -o /dev/null -w '%{http_code}' --cacert {{ cert_file }} https://{{ lan_ip }}/
+  changed_when: false
+  check_mode: false
+  register: https_code
+
+- name: Assert HTTPS answers 200
+  ansible.builtin.assert:
+    that: https_code.stdout == '200'
+    fail_msg: "https://{{ lan_ip }}/ returned {{ https_code.stdout }}, expected 200"
+
+- name: Read the plain HTTP redirect on the target  # noqa: command-instead-of-module
+  ansible.builtin.command: >-
+    curl -s -o /dev/null -w '%{http_code} %{redirect_url}' http://{{ lan_ip }}/
+  changed_when: false
+  check_mode: false
+  register: http_code
+
+- name: Assert plain HTTP redirects to the canonical URL
+  ansible.builtin.assert:
+    that:
+      - http_code.stdout.split()[0] == '307'
+      - ('https://' ~ lan_name ~ '/') in http_code.stdout
+    fail_msg: >-
+      http://{{ lan_ip }}/ must answer 307 to https://{{ lan_name }}/;
+      got '{{ http_code.stdout }}'
+
+- name: Read the name pin inside the app and runner containers
+  ansible.builtin.command: "podman exec {{ item }} getent ahostsv4 {{ lan_name }}"
+  changed_when: false
+  check_mode: false
+  loop: [forgejo-forgejo, forgejo-runner-forgejo-runner]
+  register: name_pins
+
+- name: Assert the name pin answers with the LAN address alone
+  ansible.builtin.assert:
+    that: item.stdout.split('\n')[0].split()[0] == lan_ip
+    fail_msg: >-
+      {{ lan_name }} does not resolve to {{ lan_ip }} inside {{ item.item }}
+      (got: {{ item.stdout_lines[0] | default('nothing') }}); the pod
+      hostAliases pin is wrong or the pod needs a restart
+  loop: "{{ name_pins.results }}"
+  loop_control:
+    label: "{{ item.item }}"
+
+- name: Reload systemd after a unit-file change  # noqa: no-handler
+  ansible.builtin.systemd:
+    daemon_reload: true
+  when: systemd_units.changed
+
+- name: Restart the Forgejo pod after a definition change  # noqa: no-handler
+  ansible.builtin.systemd:
+    name: podman-kube@opt-forgejo-kube-forgejo.yaml.service
+    state: restarted
+  when: forgejo_pod_yaml.changed
+
+- name: Restart the runner pod after a definition change  # noqa: no-handler
+  ansible.builtin.systemd:
+    name: podman-kube@opt-forgejo-kube-runner.yaml.service
+    state: restarted
+  when: runner_pod_yaml.changed

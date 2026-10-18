@@ -1,0 +1,28 @@
+---
+# Converge the Forgejo LAN instance. One command covers a fresh machine
+# and a running one; a second run reports no changes.
+#
+#   ansible-playbook site.yml                  full convergence
+#   ansible-playbook site.yml --check --diff   verify config, change nothing
+#   ansible-playbook site.yml --tags runner    one area only
+#   ansible-playbook site.yml --tags verify    one-shot backup/cleanup/probe runs
+- name: Converge the Forgejo LAN instance
+  hosts: forgejo
+  any_errors_fatal: true
+  tasks:
+    - name: Base system
+      ansible.builtin.import_tasks: tasks/base.yml
+      tags: [base]
+
+    - name: Forgejo app, certificate, services and timers
+      ansible.builtin.import_tasks: tasks/forgejo.yml
+      tags: [forgejo]
+
+    - name: Actions runner
+      ansible.builtin.import_tasks: tasks/runner.yml
+      tags: [runner]
+
+    - name: One-shot operational checks
+      ansible.builtin.import_tasks: tasks/verify.yml
+      # never: runs only when explicitly requested with --tags verify.
+      tags: [verify, never]

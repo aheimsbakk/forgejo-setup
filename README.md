@@ -17,8 +17,9 @@ What it gives you:
   left out because CI rebuilds them
 - A daily disk cleanup that removes container images and stopped
   containers unused for a week
-- A step-by-step install recipe you can rerun on any fresh Debian 13
-  machine with nothing but an SSH key and an IP
+- An Ansible playbook that installs everything on a fresh Debian 13
+  machine — and keeps a running machine converged — with nothing but
+  an SSH key and an IP
 
 ## Quick start
 
@@ -26,8 +27,10 @@ You need: a Debian 13 machine on your network, and SSH private key access
 as root on it.
 
 1. Clone this repo on the machine you run SSH from.
-2. Open `docs/forgejo-install-steps.md` and follow it top to bottom. It
-   asks for the target IP, an admin username, and an admin password.
+2. Run the playbook as described in `docs/forgejo-install-steps.md`:
+   create the parameter store from `ansible/hosts.yml.example` (target
+   IP, LAN resolver, SSH key, admin account and password), then apply
+   with `ansible-playbook site.yml`.
 3. Import the certificate (`tmp/certs/forgejo.crt`) on the device you
    browse from — the "Client trust" section of
    `docs/forgejo-operations.md` lists the command for each OS.
@@ -137,17 +140,16 @@ itself:
 
 ## Configuration
 
-- The per-machine settings are the LAN address and the LAN resolver.
-  `/opt/forgejo/.env` keeps the address for `gen-cert.sh`
-  (`LAN_IP=<your-lan-ip>`). The pod definitions and
-  `/etc/containers/containers.conf` carry the real addresses literally.
-- The runner repeats the LAN address in
-  `/srv/forgejo-runner/config.yaml` (`--add-host=forgejo.local:<ip>`),
-  which is how job containers resolve the name. Change the pod
-  definitions, `/opt/forgejo/.env`, and the runner config together when
-  the address changes.
-- All other Forgejo settings live in `/opt/forgejo/kube/forgejo.yaml`
-  as `FORGEJO__*` variables. After editing:
+- The per-machine settings — LAN address, resolver, SSH key — live in
+  `ansible/hosts.yml` (gitignored). The playbook renders them into the
+  pod definitions, `/etc/containers/containers.conf`,
+  `/opt/forgejo/.env` and the runner config, and restarts what
+  changed. Change the address by editing `hosts.yml` and re-running
+  the playbook.
+- All other Forgejo settings live in
+  `ansible/templates/kube/forgejo.yaml.j2` as `FORGEJO__*` variables.
+  Edit the template, then re-run the playbook — or edit
+  `/opt/forgejo/kube/forgejo.yaml` on the target and restart:
   ```bash
   ssh -i <key> root@<target-ip> \
     'systemctl restart podman-kube@opt-forgejo-kube-forgejo.yaml.service'

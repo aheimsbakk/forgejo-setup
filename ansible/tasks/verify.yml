@@ -1,0 +1,75 @@
+---
+# One-shot operational checks: run a backup, run a cleanup, probe the
+# engine's registry trust. Opt-in with --tags verify; skipped by
+# default so normal convergence stays side-effect free.
+
+- name: Run one backup
+  ansible.builtin.systemd:
+    name: forgejo-backup.service
+    state: started
+
+- name: Find the newest dump
+  ansible.builtin.shell: ls -1t {{ backup_dir }}/forgejo-dump-*.zip
+  changed_when: false
+  register: dumps
+
+- name: Assert a dump exists
+  ansible.builtin.assert:
+    that: dumps.stdout_lines | length > 0
+    fail_msg: no dump in {{ backup_dir }} after the backup run
+
+- name: Assert the newest dump leaves registry blobs out
+  # Zip entry names are stored uncompressed, so grep reads the file
+  # list without unzip on the target.
+  ansible.builtin.command: grep -q data/packages {{ dumps.stdout_lines[0] }}
+  changed_when: false
+  failed_when: blob_check.rc not in [0, 1]
+  register: blob_check
+
+- name: Fail when the dump contains registry blobs
+  ansible.builtin.assert:
+    that: blob_check.rc == 1
+    fail_msg: >-
+      {{ dumps.stdout_lines[0] }} contains data/packages entries;
+      backup.sh must pass --skip-package-data
+
+- name: Run one cleanup
+  ansible.builtin.systemd:
+    name: forgejo-cleanup.service
+    state: started
+
+- name: Probe the engine's trust in the instance registry
+  # Without a trusted certificate the pull fails with x509; "manifest
+  # unknown" or 401 means TLS passed and only the image is missing.
+  ansible.builtin.shell: >
+    set -o pipefail;
+    podman pull {{ lan_name }}/library/does-not-exist:latest 2>&1 | tail -1
+  changed_when: false
+  # The pull is expected to fail (no such image); the assert below
+  # decides whether the failure was TLS or the missing image.
+  failed_when: false
+  register: registry_probe
+
+- name: Assert the engine trusts the instance certificate
+  ansible.builtin.assert:
+    that: "'x509' not in registry_probe.stdout"
+    fail_msg: >-
+      the engine rejected the instance certificate ({{ registry_probe.stdout }});
+      check /etc/containers/certs.d/{{ lan_name }}/forgejo.crt exists and
+      keeps the .crt suffix
+
+# is-enabled is a read; the systemd module has no query mode.
+- name: Read the timer states  # noqa: command-instead-of-module
+  ansible.builtin.command: systemctl is-enabled {{ item }}
+  changed_when: false
+  check_mode: false
+  loop: [forgejo-backup.timer, forgejo-cleanup.timer]
+  register: timer_states
+
+- name: Assert both timers are armed
+  ansible.builtin.assert:
+    that: item.stdout == 'enabled'
+    fail_msg: "{{ item.item }} is not enabled"
+  loop: "{{ timer_states.results }}"
+  loop_control:
+    label: "{{ item.item }}"

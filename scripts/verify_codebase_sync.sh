@@ -16,7 +16,7 @@ while IFS= read -r path; do
 		echo "missing: $path" >&2
 		missing=1
 	fi
-done < <(grep -oE '`(docs|forgejo|scripts|tmp)/[A-Za-z0-9._/-]+`' "$CODEBASE" | tr -d '`' | sort -u)
+done < <(grep -oE '`(docs|ansible|scripts|templates|tasks|tmp)/[A-Za-z0-9._/-]+`' "$CODEBASE" | tr -d '`' | sort -u)
 
 if [ "$missing" -eq 0 ]; then
 	echo "CODEBASE.md paths all exist"

@@ -23,13 +23,13 @@ spec:
   # address stored in .runner, so this only removes a wrong-answer
   # hazard; job containers get the pin from container.options instead.
   hostAliases:
-    - ip: "192.0.2.40"
+    - ip: "{{ lan_ip }}"
       hostnames:
         - "forgejo.local"
   containers:
     - name: forgejo-runner
       # Pinned stable release. Bump deliberately; never use :latest.
-      image: data.forgejo.org/forgejo/runner:13.1.0
+      image: {{ runner_image }}
       # The runner daemon must reach /run/podman/podman.sock (root-owned).
       # Socket access is root-equivalent on the host either way, so the
       # container runs as root; job containers it starts are unprivileged.

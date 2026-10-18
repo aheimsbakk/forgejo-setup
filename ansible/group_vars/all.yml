@@ -1,0 +1,40 @@
+---
+# Deployment settings (tracked). Per-site secrets and addresses live in
+# the untracked hosts.yml; see hosts.yml.example. Host variables in
+# hosts.yml override the placeholders below.
+
+static_hostname: forgejo
+lan_name: forgejo.local
+# Placeholders (RFC 5737 range); hosts.yml carries the real values.
+lan_ip: 192.0.2.40
+lan_resolver: 192.0.2.1
+# Interface Avahi may announce on; must exist on the target.
+lan_interface: enp1s0
+
+# Pinned stable images; bump deliberately, never use :latest.
+forgejo_image: codeberg.org/forgejo/forgejo:16.0.5
+runner_image: data.forgejo.org/forgejo/runner:13.1.0
+# Default job image label: node + git, so mirrored JS actions work.
+runner_job_label: docker:docker://node:24-bookworm
+
+# Used only by admin-credential tasks (fresh installs).
+forgejo_admin_user: admin
+
+# Runner mitigations: 2 vCPUs, 4 GB RAM, no swap - do not raise.
+runner_capacity: 2
+runner_memory_limit: 1g
+runner_cpu_limit: 1
+
+# Container user identity (uid/gid) that owns the data directory.
+container_user: "1000"
+
+# Target paths.
+opt_dir: /opt/forgejo
+data_dir: /srv/forgejo
+runner_dir: /srv/forgejo-runner
+cert_dir: /srv/forgejo-certs
+cert_file: /srv/forgejo-certs/forgejo.crt
+backup_dir: /srv/forgejo-backups
+secrets_dir: /opt/forgejo/secrets
+# Certificate path inside job containers (mounted read-only).
+cert_job_path: /etc/ssl/certs/forgejo-lan.crt

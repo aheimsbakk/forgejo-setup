@@ -28,3 +28,5 @@
 | Default multiarch build template uses buildah manifest and latest tag | decision | medium | forgejo, actions, buildah, multiarch, template | | archive/2026-10-18-default-multiarch-build-template.md |
 | Restart enforcement for the podman-kube units: on hold, leading fix known | decision | high | podman, systemd, restart, forgejo, on-hold | | archive/2026-10-18-restart-enforcement-on-hold.md |
 | forgejo-runner generate-config sets env_file: .env; empty value stops the start warning | warning | medium | forgejo, actions, runner, config, env-file | | archive/2026-10-18-runner-env-file-empty.md |
+| Reproduce procedure is now the Ansible playbook in ansible/ | decision | high | ansible, deployment, playbook, idempotent, uv | | archive/2026-10-18-ansible-playbook-replaces-steps.md |
+| Ansible gotchas hit during the playbook build: fake handlers, tags, globs, facts | warning | medium | ansible, idempotent, tags, check-mode | | archive/2026-10-18-ansible-gotchas-fake-handlers-tags.md |
