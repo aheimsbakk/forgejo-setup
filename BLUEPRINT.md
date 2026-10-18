@@ -1,8 +1,10 @@
 # Blueprint
 
 Language-agnostic specification for the Forgejo LAN install project.
-The "product" is a reproducible deployment: documentation plus the exact
-configuration files deployed to a target machine.
+The "product" is a reproducible deployment: an Ansible playbook that
+converges a target machine to the desired state, plus the configuration
+files and scripts it deploys, plus the documentation that records the
+decisions behind them.
 
 ## System Goals
 
@@ -25,8 +27,11 @@ configuration files deployed to a target machine.
 
 ## Component Hierarchy
 
-- Recipe component — ordered, parameterized change log and reproduce
-  procedure; the entry point of the whole system.
+- Playbook component — the entry point of the whole system: a
+  declarative convergence run over SSH that brings a target to the
+  recorded state, idempotently, failing hard on any unmet condition.
+  It replaces the manual reproduce procedure; the change register in
+  the recipe document stays as history.
 - Service configuration component — declarative pod definitions for the
   Forgejo app and the Actions runner, including port bindings, storage
   mounts and all application settings.
@@ -44,20 +49,24 @@ configuration files deployed to a target machine.
   engine objects (images, stopped containers, networks, build cache)
   once they have stayed unused through a grace period. The service
   definition is the source of truth for what must be kept.
-- Parameter store component — per-deployment values (address, admin
-  account, key path) kept outside version control.
+- Parameter store component — per-deployment values (address, resolver,
+  interface, admin account) kept outside version control in the
+  playbook's inventory; non-secret settings are tracked.
 - Discovery component — LAN name resolution and announcement. Multicast
-  discovery does not reach container workloads, so the reproduce
-  procedure also records the name-to-address mapping in the runner's
+  discovery does not reach container workloads, so the playbook
+  also records the name-to-address mapping in the runner's
   job-container settings.
 
 ## Data Flow
 
-- Operator runs the reproduce procedure over SSH against the target.
-- Parameters flow: parameter store -> reproduce procedure -> service
-  definitions and engine settings on the target. The service definitions
-  carry the LAN address literally; the parameter store also keeps it for
-  the certificate script.
+- Operator runs the playbook over SSH against the target. The same
+  command converges a fresh machine and a running one; check mode
+  verifies the configuration without changing anything.
+- Parameters flow: parameter store -> playbook -> service
+  definitions and engine settings on the target. The service
+  definitions are generated from templates with the LAN address
+  written in; the address also lands in the target's deployment env
+  file for the certificate script.
 - The certificate component writes a private key and a certificate to a
   dedicated host directory; the service configuration mounts that
   directory read-only. The public half travels back to the operator and
@@ -96,14 +105,15 @@ configuration files deployed to a target machine.
   the canonical name.
 - Container name mapping: the service definition pins the instance name
   to the LAN address taken from the parameter store, and the runner's
-  job-container settings hold a separate copy of that pair. The copy
-   must be updated whenever the address changes. The default actions
+  job-container settings hold a separate copy of that pair; the
+  playbook generates both from the same value. The default actions
    URL is the instance itself: a workflow action reference without a
    host is fetched from the instance's own repositories.
 - Service restart state: the current pod units use the stock template and
   have no restart enforcement. If the pod service stops, it stays down
   until an operator starts it again.
-- Deployment parameters: one untracked environment file per checkout.
+- Deployment parameters: one untracked inventory file per checkout;
+  the tracked example carries documentation-range placeholders.
 - Cleanup grace state: one record per currently unused image, holding
   the day it was first seen unused. An image becomes removable only
   after the grace period has passed. The record is rewritten on every
@@ -111,12 +121,19 @@ configuration files deployed to a target machine.
 
 ## Contracts
 
-- Reproduce procedure: takes key path, target address, admin name and
-  admin password; each step is idempotent or fails fast; verification
-  steps follow every change.
+- Playbook contract: the inventory supplies the key path and target
+  address; group variables supply resolver, interface, account names
+  and image pins. Every task is idempotent; a second run reports no
+  changes. Check mode runs every read-only verification and mutates
+  nothing, so a check run confirms the live configuration. Failed
+  verifications stop the run with a named cause. Tasks that need
+  admin credentials (account creation, runner registration) are
+  skipped when no credentials are supplied, and the playbook fails
+  with a clear message if a prerequisite is then missing.
 - Service configuration: application settings are expressed only as
-  environment-style variables in the service definition; the reproduce
-  procedure writes the LAN address into the definition during deployment.
+  environment-style variables in the service definition templates;
+  the playbook writes the LAN address into the definition when it
+  generates it.
   The canonical web address is
   the LAN name: the instance declares itself by name, so clients that
   reach it by name get no mismatch warning. The LAN address still
@@ -181,15 +198,16 @@ configuration files deployed to a target machine.
 - Container registry blobs: inside the application data directory, but
   kept out of the dump. They are rebuildable by the pipeline, so they are
   the one part of application state that a restore does not reproduce.
-- Parameter store: untracked file, restricted permissions, never
-  committed.
+- Parameter store: untracked inventory file, restricted permissions,
+  never committed; a tracked example carries the parameter names.
 - Cleanup grace record: one small file in a host state directory
   outside the application data directory. It holds image identifiers
   and dates only, no secrets.
 
 ## External Interfaces
 
-- SSH (root) to the target; key-based only.
+- SSH (root) to the target; key-based only, driven by the playbook's
+  SSH connection plugin.
 - HTTPS on the LAN address for the web UI, git-over-HTTP and the
   administration API, canonically addressed by the LAN name. The
   certificate is self-signed; every client pins it.
@@ -204,7 +222,10 @@ configuration files deployed to a target machine.
   certificate. Workflow actions are not fetched from public hosts: the
   default actions URL is the instance itself, and the operator mirrors
   the action repositories it needs onto the instance.
-- mDNS/multicast on the LAN for name discovery.
+- mDNS/multicast on the LAN for name discovery. Multicast discovery
+  does not reach container workloads, so the playbook also pins the
+  name-to-address mapping in the service definitions and in the
+  runner's job-container settings.
 - Instance administration API for runner registration and smoke tests.
 
 ## Security Boundaries
