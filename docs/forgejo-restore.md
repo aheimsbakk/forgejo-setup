@@ -11,7 +11,7 @@ copy:
 |---|---|
 | `data/` | `/srv/forgejo/gitea/` (`APP_DATA_PATH`) |
 | `repos/` | `/srv/forgejo/git/repositories/` (`[repository] ROOT`) |
-| `app.ini` and `data/conf/app.ini` | not used — the compose file rewrites the settings into `conf/app.ini` at every start |
+| `app.ini` and `data/conf/app.ini` | not used — the pod definition rewrites the settings into `conf/app.ini` at every start |
 | `forgejo-db.sql` | not used with SQLite |
 
 The SQLite database arrives inside `data/` as `gitea.db` together with
@@ -23,11 +23,12 @@ so `sqlite3` rejects it with `no such function: unistr`.
 ## Before you start
 
 - The dump's `app.ini` and its copy at `data/conf/app.ini` both have
-  `SECRET_KEY` and `PASSWD` blanked. That costs nothing here: the compose
-  file sets `SECRET_KEY_URI=file:/etc/forgejo/secret_key` and mounts that
-  file read-only, and the image writes every `FORGEJO__*` variable into
-  `conf/app.ini` at each start. So the settings and the key come from the
-  compose file and from `/opt/forgejo/secrets/secret_key`, not from the
+  `SECRET_KEY` and `PASSWD` blanked. That costs nothing here: the pod
+  definition sets `SECRET_KEY_URI=file:/etc/forgejo/secret_key` and mounts
+  that file read-only, and the image writes every `FORGEJO__*` variable
+  into `conf/app.ini` at each start. So the settings and the key come from
+  the pod definition and from `/opt/forgejo/secrets/secret_key`, not from
+  the
   dump. That key file is in no dump and not in git. It needs its own
   backup, and a restore onto a new machine needs it copied there by hand —
   without it the values the database stores encrypted, a two-factor seed
@@ -47,7 +48,7 @@ so `sqlite3` rejects it with `no such function: unistr`.
 1. Stop the app. The runner can stay up; it only loses its connection.
 
    ```bash
-   docker-compose -f /opt/forgejo/docker-compose.yml stop forgejo
+   systemctl stop podman-kube@opt-forgejo-kube-forgejo.yaml.service
    ```
 
 2. Move the live data dir aside. It is your fallback.
@@ -87,7 +88,7 @@ so `sqlite3` rejects it with `no such function: unistr`.
 6. Start the app and check it answers:
 
    ```bash
-   docker-compose -f /opt/forgejo/docker-compose.yml start forgejo
+   systemctl start podman-kube@opt-forgejo-kube-forgejo.yaml.service
    curl -s --cacert /srv/forgejo-certs/forgejo.crt https://forgejo.local/api/v1/version
    ```
 

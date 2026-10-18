@@ -1,7 +1,8 @@
 #!/bin/bash
 # Create the self-signed TLS certificate Forgejo serves HTTPS with.
-# Run on the target as root. LAN_IP is read from the compose env file so
-# the certificate always names the address the instance is published on.
+# Run on the target as root. LAN_IP is read from the deployment env file
+# so the certificate always names the address the instance is published
+# on.
 #
 # Browsers, git clients and CI pin this certificate. Regenerating it
 # breaks those pins, so an existing pair that still covers the current

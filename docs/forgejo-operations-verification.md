@@ -3,7 +3,9 @@
 Measured results for the instance installed by
 `docs/forgejo-install-recipe.md` and `docs/forgejo-install-steps.md`,
 grouped by the change set that produced them. The problems found while
-reaching these results are in `docs/forgejo-footguns.md`.
+reaching these results are in `docs/forgejo-footguns.md`. Results before
+change 39 use Docker commands; the podman migration measurements are in
+`docs/forgejo-podman-migration-verification.md`.
 
 ## First run
 
@@ -260,3 +262,27 @@ then run a later job inside that image. Repositories
 Measured results for the backup script, the dump format, the restore
 drill and the global encryption key are in
 `docs/forgejo-backup-restore-verification.md`.
+
+## Runner start-up log noise (changes 46–47)
+
+- Before: the first runner log line at every start was
+  `level=warning msg="Missing env file \".env\" is ignored"`. The cause
+  was the generated key `env_file: .env` in
+  `/srv/forgejo-runner/config.yaml`. The runner declared normally, so
+  the line is noise rather than a fault.
+- After setting the key to an empty value and restarting the runner
+  unit, the log starts at `Starting runner daemon`, then
+  `runner: forgejo-runner, with version: v13.1.0, with labels: [docker],
+  ephemeral: false, declared successfully` and `[poller] launched`. No
+  warning line. Unit `active`.
+- The edit is one line. The previous file is kept at
+  `/root/forgejo-runner-config.yaml.2026-10-18.bak` (mode 600, outside
+  the runner data directory, so no dump takes it).
+- Same block, same pass (change 47): the template's sample `envs`
+  entries `A_TEST_ENV_NAME_1: a_test_env_value_1` and
+  `A_TEST_ENV_NAME_2: a_test_env_value_2` were deleted, because the
+  runner passes every `envs` entry into job containers. `GIT_SSL_CAINFO`
+  and `NODE_EXTRA_CA_CERTS` stay. After the restart the log is
+  unchanged: `declared successfully`, `[poller] launched`. The file as
+  it stood before this edit is
+  `/root/forgejo-runner-config.yaml.2026-10-18-2.bak` (mode 600).

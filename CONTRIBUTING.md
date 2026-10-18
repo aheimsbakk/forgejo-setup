@@ -14,17 +14,23 @@ Developer guide for this repo. User-facing product notes are in
 - `docs/forgejo-ci-and-registry.md` — the Actions runner, the container
   registry, access from job containers, mirrored workflow actions.
 - `docs/forgejo-operations.md` — backup and restore, disk cleanup, and how
-  client devices and the Docker daemon trust the certificate.
+  client devices and the engine trust the certificate.
 - `docs/forgejo-operations-verification.md` — measured results for each
   change set: the commands run and what they returned.
 - `docs/forgejo-backup-restore-verification.md` — the same for the backup
   script, the dump format, the restore drill and the global encryption
   key.
-- `tasks/` — proposed future work. Not implemented, and not part of the
-  state deployed to a target machine.
+- `docs/forgejo-podman-migration-verification.md` — measurements for the
+  Docker-to-podman migration and the post-teardown checks.
+- `tasks/` — task records. Some are proposals; some record completed
+  target work. They are not part of the state deployed to a target
+  machine unless the reproduce procedure copies them.
+- `templates/` — reusable files copied into new repositories, not deployed
+  to the Forgejo target machine.
 - `forgejo/` — files deployed to a target machine under `/opt/forgejo/`.
-- `.env` — real parameters (`IP`, `ADMIN_USER`, `ADMIN_PASSWORD`, `KEY`)
-  for the current deployment. Gitignored, mode 600. Never commit it.
+- `.env` — real parameters (`IP`, `LAN_RESOLVER`, `ADMIN_USER`,
+  `ADMIN_PASSWORD`, `KEY`) for the current deployment. Gitignored, mode
+  600. Never commit it.
 - `.env.example` — template for `.env` with placeholder values.
 
 ## Scripts and units
@@ -50,7 +56,7 @@ target. No arguments. Run manually for testing:
 ssh -i <key> root@<ip> 'systemctl start forgejo-backup.service'
 ```
 
-Requires the `forgejo` container to be running. To check what a dump
+Requires the `forgejo-forgejo` container to be running. To check what a dump
 holds, grep the zip entry names — they are stored uncompressed, and the
 target has no unzip:
 
@@ -72,11 +78,11 @@ systemctl daemon-reload && systemctl enable --now forgejo-backup.timer
 
 ### `forgejo/cleanup.sh`
 
-Removes unused container images, stopped containers outside the compose
-stack, unused networks and the build cache. An image is removed only
-after 7 days with no container referencing it; that grace record lives
-in `/var/lib/forgejo-cleanup/unused-images.tsv`. Volumes are never
-touched, and the images named in the compose file are never removed.
+Removes unused container images, stopped containers outside the podman
+kube stack, and unused networks. An image is removed only after 7 days
+with no container referencing it; that grace record lives in
+`/var/lib/forgejo-cleanup/unused-images.tsv`. Volumes are never touched,
+and the images named in the kube YAML files are never removed.
 Deploy to `/opt/forgejo/cleanup.sh` (mode 755). No arguments. Run
 manually and read the log:
 
@@ -103,7 +109,7 @@ Creates the self-signed TLS certificate Forgejo serves:
 `/srv/forgejo-certs/forgejo.crt` and `forgejo.key`, valid 5 years, with
 the LAN address, `127.0.0.1`, `forgejo.local`, `localhost` and the
 hostname in the subject alternative names. No arguments; it reads
-`LAN_IP` from `/opt/forgejo/.env`, so deploy the compose env file first
+`LAN_IP` from `/opt/forgejo/.env`, so deploy the target env file first
 and run it before the first start. Re-running keeps an existing
 certificate that still covers the current address.
 
@@ -116,18 +122,35 @@ scp -i <key> root@<ip>:/srv/forgejo-certs/forgejo.crt tmp/certs/forgejo.crt
 The script prints the SHA-256 fingerprint; compare it when checking a
 client pin. The key stays on the target — copy only the `.crt`.
 
-### `forgejo/docker-compose.yml` and `forgejo/.env.example`
+### `forgejo/kube/`, `forgejo/containers.conf`, and `forgejo/.env.example`
 
-Forgejo service definition; all Forgejo config is in the compose file as
-`FORGEJO__*` variables, including the HTTPS settings (`PROTOCOL`,
-`CERT_FILE`, `KEY_FILE`, `REDIRECT_OTHER_PORT`). It also defines the
-Actions runner service (socket mount for the runner daemon only,
-`user: "0:0"`, no published ports, instance certificate mounted into
-`/etc/ssl/certs`). Both services pin `forgejo.local` to `LAN_IP` with
-`extra_hosts`, because the host resolver otherwise answers the name with
-every address on the machine. Copy the compose file to `/opt/forgejo/`
-and create `/opt/forgejo/.env` from `.env.example` (set `LAN_IP`, mode
-600). Runner registration and mitigation steps are in the recipe.
+`forgejo/kube/forgejo.yaml` and `forgejo/kube/runner.yaml` are the pod
+definitions. All Forgejo config is in the app pod as `FORGEJO__*`
+variables, including the HTTPS settings (`PROTOCOL`, `CERT_FILE`,
+`KEY_FILE`, `REDIRECT_OTHER_PORT`). The runner pod mounts the podman
+socket for the runner daemon only, runs as root for that socket access,
+publishes no ports, and mounts the instance certificate into
+`/etc/ssl/certs`. Both pods pin `forgejo.local` with `hostAliases`,
+because the host resolver otherwise answers the name with every address
+on the machine.
+
+`forgejo/containers.conf` goes to `/etc/containers/containers.conf`. It
+sets `userns="auto:size=65536"` for runner-created job containers and a
+LAN resolver for container DNS. The reproduce procedure replaces the
+placeholder resolver address.
+
+Copy the kube files to `/opt/forgejo/kube/`, replace the placeholder LAN
+address, and create `/opt/forgejo/.env` from `.env.example` (set
+`LAN_IP`, mode 600). Start the pods with:
+
+```bash
+systemctl start podman-kube@opt-forgejo-kube-forgejo.yaml.service
+systemctl start podman-kube@opt-forgejo-kube-runner.yaml.service
+systemctl enable podman-kube@opt-forgejo-kube-forgejo.yaml.service
+systemctl enable podman-kube@opt-forgejo-kube-runner.yaml.service
+```
+
+Runner registration and mitigation steps are in the recipe.
 
 ## Conventions
 

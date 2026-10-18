@@ -1,0 +1,149 @@
+# Forgejo app pod, LAN-only HTTPS. Replaces the compose service of the
+# same name; all Forgejo configuration stays here as FORGEJO__* env
+# vars. Started by podman-kube@opt-forgejo-kube-forgejo.yaml.service.
+# The LAN address is literal here (podman kube play has no variable
+# interpolation): the reproduce procedure writes it from the parameter
+# store into hostIP and hostAliases.
+apiVersion: v1
+kind: Pod
+metadata:
+  name: forgejo
+  labels:
+    app: forgejo
+spec:
+  # Pin the instance name to the LAN address. Multicast discovery does
+  # not reach container networks, so the name must resolve from the
+  # pod's own /etc/hosts. Same pin the compose extra_hosts had.
+  hostAliases:
+    - ip: "192.0.2.40"
+      hostnames:
+        - "forgejo.local"
+  containers:
+    - name: forgejo
+      # Pinned stable release. Bump deliberately; never use :latest.
+      image: codeberg.org/forgejo/forgejo:16.0.5
+      # Bound to the LAN IPv4 address only. The host also has a public
+      # IPv6 address; omitting hostIP would expose Forgejo there.
+      # hostIP on containerPort is honored by podman kube play
+      # (measured 2026-10-18).
+      ports:
+        - containerPort: 3000
+          hostIP: "192.0.2.40"
+          hostPort: 443
+        # The redirector listens on 8080 inside the container, not 80:
+        # the Forgejo server runs as uid 1000 and podman leaves
+        # net.ipv4.ip_unprivileged_port_start at 1024 (Docker set it to
+        # 0 in the container namespace), so binding 80 inside the
+        # container fails with EACCES. The host still publishes 80.
+        - containerPort: 8080
+          hostIP: "192.0.2.40"
+          hostPort: 80
+        - containerPort: 2222
+          hostIP: "192.0.2.40"
+          hostPort: 2222
+      env:
+        # Match the owner of the /srv/forgejo bind mount on the host.
+        - name: USER_UID
+          value: "1000"
+        - name: USER_GID
+          value: "1000"
+        # Database: built-in SQLite inside the data volume.
+        - name: FORGEJO__database__DB_TYPE
+          value: sqlite3
+        # Web addressing. The canonical URL is the mDNS name, not the
+        # address: Forgejo shows a mismatch warning to every client whose
+        # Host header differs from ROOT_URL, and clients reach the
+        # instance by name (Avahi on the LAN, hostAliases inside
+        # containers). The address still serves; it only shows the
+        # warning. DOMAIN keeps generated SSH clone URLs on the name too.
+        - name: FORGEJO__server__DOMAIN
+          value: forgejo.local
+        - name: FORGEJO__server__ROOT_URL
+          value: https://forgejo.local/
+        - name: FORGEJO__server__HTTP_PORT
+          value: "3000"
+        # HTTPS with the self-signed certificate from gen-cert.sh. Absolute
+        # paths: the default CERT_FILE/KEY_FILE are relative to CustomPath,
+        # which is inside the data dir and therefore inside backups.
+        - name: FORGEJO__server__PROTOCOL
+          value: https
+        - name: FORGEJO__server__CERT_FILE
+          value: /etc/forgejo/certs/forgejo.crt
+        - name: FORGEJO__server__KEY_FILE
+          value: /etc/forgejo/certs/forgejo.key
+        # Plain HTTP listener that only redirects to ROOT_URL. It keeps
+        # existing http:// clone URLs and bookmarks working.
+        - name: FORGEJO__server__REDIRECT_OTHER_PORT
+          value: "true"
+        # Matches the 8080 containerPort above; the host publishes it as 80.
+        - name: FORGEJO__server__PORT_TO_REDIRECT
+          value: "8080"
+        # Git-over-SSH: Forgejo runs its own SSH server. It must not bind
+        # port 22 inside the container because the image's OpenSSH daemon
+        # already uses it. Listen on 2222, published unchanged on the host.
+        - name: FORGEJO__server__START_SSH_SERVER
+          value: "true"
+        - name: FORGEJO__server__SSH_PORT
+          value: "2222"
+        - name: FORGEJO__server__SSH_LISTEN_PORT
+          value: "2222"
+        # Skip the web install wizard; config is fully defined here.
+        - name: FORGEJO__security__INSTALL_LOCK
+          value: "true"
+        # Global key for the data Forgejo encrypts at rest (two-factor
+        # seeds, login source config). Keeping the value in a file outside
+        # the data dir means it is in no dump and not in this tracked file.
+        # SECRET_KEY_URI and SECRET_KEY must not both have a value; Forgejo
+        # exits at startup if they do.
+        - name: FORGEJO__security__SECRET_KEY_URI
+          value: file:/etc/forgejo/secret_key
+        # LAN instance: accounts are created by the admin via CLI.
+        - name: FORGEJO__service__DISABLE_REGISTRATION
+          value: "true"
+        # Actions: "uses: actions/checkout@v4" (no host) is fetched from
+        # this instance, not from a public forge. The operator mirrors
+        # every action used by workflows into repositories here.
+        - name: FORGEJO__actions__DEFAULT_ACTIONS_URL
+          value: self
+        # Pagination: 50 repositories per page when browsing.
+        - name: FORGEJO__ui__EXPLORE_PAGING_NUM
+          value: "50"
+        # The dotted ini section [ui.user] is escaped as _0X2E_ in variable
+        # names; environment-to-ini decodes it back to the section.
+        - name: FORGEJO__ui_0X2E_user__REPO_PAGING_NUM
+          value: "50"
+      volumeMounts:
+        - name: data
+          mountPath: /data
+        - name: certs
+          mountPath: /etc/forgejo/certs
+          readOnly: true
+        # Read-only single-file mount, so the key stays out of /data and out
+        # of every dump. Host side: /opt/forgejo/secrets is mode 750 and the
+        # file mode 640 root:1000, which is how the container's uid 1000
+        # reads it.
+        - name: secret-key
+          mountPath: /etc/forgejo/secret_key
+          readOnly: true
+        - name: timezone
+          mountPath: /etc/timezone
+          readOnly: true
+        - name: localtime
+          mountPath: /etc/localtime
+          readOnly: true
+  volumes:
+    - name: data
+      hostPath:
+        path: /srv/forgejo
+    - name: certs
+      hostPath:
+        path: /srv/forgejo-certs
+    - name: secret-key
+      hostPath:
+        path: /opt/forgejo/secrets/secret_key
+    - name: timezone
+      hostPath:
+        path: /etc/timezone
+    - name: localtime
+      hostPath:
+        path: /etc/localtime

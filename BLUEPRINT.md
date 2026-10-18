@@ -27,9 +27,9 @@ configuration files deployed to a target machine.
 
 - Recipe component — ordered, parameterized change log and reproduce
   procedure; the entry point of the whole system.
-- Service configuration component — declarative definitions of the
-  Forgejo app container and the Actions runner container, including
-  port bindings, storage mounts and all application settings.
+- Service configuration component — declarative pod definitions for the
+  Forgejo app and the Actions runner, including port bindings, storage
+  mounts and all application settings.
 - Certificate component — self-signed key and certificate generation on
   the target, storage in a dedicated host directory, and export of the
   public certificate so clients and CI can pin it.
@@ -55,7 +55,9 @@ configuration files deployed to a target machine.
 
 - Operator runs the reproduce procedure over SSH against the target.
 - Parameters flow: parameter store -> reproduce procedure -> service
-  configuration on the target.
+  definitions and engine settings on the target. The service definitions
+  carry the LAN address literally; the parameter store also keeps it for
+  the certificate script.
 - The certificate component writes a private key and a certificate to a
   dedicated host directory; the service configuration mounts that
   directory read-only. The public half travels back to the operator and
@@ -98,6 +100,9 @@ configuration files deployed to a target machine.
    must be updated whenever the address changes. The default actions
    URL is the instance itself: a workflow action reference without a
    host is fetched from the instance's own repositories.
+- Service restart state: the current pod units use the stock template and
+  have no restart enforcement. If the pod service stops, it stays down
+  until an operator starts it again.
 - Deployment parameters: one untracked environment file per checkout.
 - Cleanup grace state: one record per currently unused image, holding
   the day it was first seen unused. An image becomes removable only
@@ -110,8 +115,9 @@ configuration files deployed to a target machine.
   admin password; each step is idempotent or fails fast; verification
   steps follow every change.
 - Service configuration: application settings are expressed only as
-  environment-style variables in the service definition; the LAN
-  address is the single injected variable. The canonical web address is
+  environment-style variables in the service definition; the reproduce
+  procedure writes the LAN address into the definition during deployment.
+  The canonical web address is
   the LAN name: the instance declares itself by name, so clients that
   reach it by name get no mismatch warning. The LAN address still
   serves content and git, but is not canonical. TLS settings point at
@@ -189,8 +195,8 @@ configuration files deployed to a target machine.
   certificate is self-signed; every client pins it.
 - HTTP on the LAN address answers redirects to the canonical HTTPS URL
   and nothing else.
-- Distribution package repositories for the container engine, Compose,
-  and mDNS packages.
+- Distribution package repositories for the container engine and mDNS
+  packages.
 - Official container images for the application and the runner, pinned
   to stable versions.
 - Public HTTPS hosts for container images: job images are pulled from

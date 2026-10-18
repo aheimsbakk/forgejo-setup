@@ -1,5 +1,37 @@
 # Changelog
 
+## [0.9.0] - 2026-10-18
+
+- **why:** The stack ran on Docker Compose, which gave runner job containers no user namespace and put a second engine on a machine already running podman. The move to podman pod definitions fixes both. Two defects in the runner's generated config were fixed in the same pass.
+- **model:** kompis/qwen3.8-flash-next-iq3_s
+- **tags:** forgejo, podman, kube, runner, actions
+
+### Added
+
+- `forgejo/kube/forgejo.yaml` and `forgejo/kube/runner.yaml`: pod definitions for the app and the runner, started by the stock `podman-kube@.service` template (changes 39–41)
+- `forgejo/containers.conf`: job-container user namespace (`userns=auto:size=65536`) and the LAN resolver, deployed to `/etc/containers/containers.conf`
+- `templates/build-multiarch.yml`: the default multi-architecture buildah workflow, copied into new repositories
+- `tasks/podman-migration.md` and `docs/forgejo-podman-migration-verification.md`: the migration task record and its measurements, including the restart-semantics finding
+- `docs/memory/archive/`: 12 entries for the migration, runner trust, buildah in job containers and the runner config fixes; 7 superseded entries removed
+
+### Changed
+
+- `forgejo/backup.sh` and `forgejo/cleanup.sh` drive podman: exec target `forgejo-forgejo`, protected images read from the `image:` lines in `/opt/forgejo/kube/*.yaml`, stack containers matched by the `PODMAN_SYSTEMD_UNIT` label, image ids compared in full `sha256:` form (change 44)
+- Job containers gained `--cap-add SYS_ADMIN` and `--security-opt apparmor=unconfined`, which nested buildah needs inside the job's user namespace (change 42)
+- Reproduce step 16 now also clears the runner's `env_file` and deletes the template's sample `envs` entries; step 16b checks both (changes 46–47)
+- `BLUEPRINT.md`, `CODEBASE.md`, `README.md`, `CONTRIBUTING.md`, the recipe, the footguns and the verification records now describe the podman state
+
+### Removed
+
+- `forgejo/docker-compose.yml`: replaced by the two pod definitions
+- Docker on the target: packages purged, `/var/lib/docker` and `/etc/docker` deleted, `FORWARD` policy set back to ACCEPT (change 45)
+
+### Fixed
+
+- The runner logged `Missing env file ".env" is ignored` at every start; `env_file` is now empty, so the daemon stops looking (change 46)
+- The runner passed the template's sample `A_TEST_ENV_NAME_1` and `A_TEST_ENV_NAME_2` into every job container; both lines are gone (change 47)
+- Reproduce step 0 defaulted `KEY` to `tmp/ssh/id_ed2219`; the key file is `tmp/ssh/id_ed22519`
+
 ## [0.8.0] - 2026-10-17
 
 - **why:** Multi-architecture image builds came up as future work. The findings were measured on the target and written down as a task, so the decision can be picked up later without measuring the host again. No change was made to the target.

@@ -24,8 +24,10 @@ mkdir -p "$BACKUP_DIR"
 # data-dir wipe.
 # forgejo dump aborts if the repositories dir does not exist yet (fresh
 # install, no repos). Create it idempotently before dumping.
-docker exec -u 1000 forgejo mkdir -p /data/git/repositories
-docker exec -u 1000 -w /data forgejo forgejo dump --skip-package-data >/dev/null
+# Container name forgejo-forgejo: podman kube play names containers
+# <pod>-<container>, and both are "forgejo" in forgejo/kube/forgejo.yaml.
+podman exec -u 1000 forgejo-forgejo mkdir -p /data/git/repositories
+podman exec -u 1000 -w /data forgejo-forgejo forgejo dump --skip-package-data >/dev/null
 find /srv/forgejo -maxdepth 1 -name 'forgejo-dump-*.zip' -exec mv {} "$BACKUP_DIR/" \;
 
 # Keep exactly the newest RETENTION dumps; delete the rest.

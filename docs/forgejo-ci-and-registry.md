@@ -13,10 +13,11 @@ and a later job can run inside it. Verified with the kept repositories
 `agent/container-build-test` (build and push) and
 `agent/container-use-test` (use).
 
-- Build: install `buildah` in the job (`apt-get`) and use
-  `redhat-actions/buildah-build@v3` in `base-image` + `content` mode.
-  `Containerfile` builds with `RUN` do not work in this runner; see
-  `docs/forgejo-footguns.md`.
+- Build: use `templates/build-multiarch.yml` for new repositories. It
+  installs `buildah` in the job and uses the buildah CLI directly.
+  `Containerfile` builds with `RUN` work after the podman migration: the
+  job gets a user namespace, `CAP_SYS_ADMIN`, and an AppArmor exception;
+  see `docs/forgejo-footguns.md`.
 - Push: `buildah push --authfile <file>`. buildah 1.28 has no
   `--password-stdin`, and an authfile keeps the token out of the process
   list. The credential is a user token with `write:package` stored as a
@@ -25,7 +26,7 @@ and a later job can run inside it. Verified with the kept repositories
   plaintext `data` (this instance has no public-key route: that path
   answers 405).
 - Use: `jobs.<id>.container.image: forgejo.local/<owner>/<repo>:<tag>`.
-  The host daemon pulls it, so change 36 is required. No
+  The host engine pulls it, so change 43 is required. No
   `container.credentials` are needed when the package is public, which it
   is by inheritance from the repository the image name matches.
 - Job image consequences: the runner replaces the image entrypoint with
@@ -36,17 +37,50 @@ and a later job can run inside it. Verified with the kept repositories
   v2 manifests and reports a `Docker-Content-Digest` that differs from
   the local image id.
 
+## Default multiarch build template
+
+`templates/build-multiarch.yml` is the default workflow template for new
+repositories. It replaces the three current build workflows in
+`agent/container-build-test`: `build.yml`, `multiarch.yml`, and
+`containerfile.yml`. Copy it to:
+
+- `.forgejo/workflows/build-multiarch.yml` on Forgejo
+- `.github/workflows/build-multiarch.yml` on GitHub
+
+It builds `amd64` and `arm64` from a `Containerfile` or `Dockerfile`,
+pushes the architecture images as `latest-amd64` and `latest-arm64`,
+then pushes the manifest list as `latest`. It writes `/etc/containers/storage.conf` with `vfs` because
+buildah 1.28.2 does not accept the global `--storage` flag used by newer
+buildah. The manifest list is assembled from registry references because
+buildah 1.28.2 on the Forgejo runner does not send a local manifest list
+with `push --all`.
+
+Required setup per repository:
+
+- Set `REGISTRY_TOKEN` to a user token with `write:package` on Forgejo.
+  GitHub can fall back to `GITHUB_TOKEN` when the repository has
+  `packages: write` permission.
+- Keep `actions/checkout` mirrored on the instance because
+  `DEFAULT_ACTIONS_URL=self` resolves relative action references locally.
+
+The workflow chooses its runner and registry from `github.server_url`:
+
+- GitHub: `ubuntu-latest`, `ghcr.io/<owner>/<repo>:latest`
+- Forgejo: `docker`, `forgejo.local/<owner>/<repo>:latest`
+
 ## CI runner (same box)
 
 Operator decision: the Actions runner shares the machine with Forgejo.
 Accepted risks and applied mitigations:
 
-- The Docker socket is mounted into the runner container only. Job
+- The podman socket is mounted into the runner container only. Job
   containers never receive it. Socket access is root-equivalent on the
   host; this is the main residual risk of the same-box design.
-- No privileged jobs, no docker-in-docker (`privileged: false`).
+- No privileged jobs, no engine-in-engine (`privileged: false`).
   Container images in pipelines are built with buildah inside jobs.
-- Job containers get `--memory=1g --cpus=1`; runner capacity is 2
+- Job containers get a user namespace from `/etc/containers/containers.conf`
+  and `--memory=1g --cpus=1 --cap-add SYS_ADMIN --security-opt
+  apparmor=unconfined` from the runner config; runner capacity is 2
   (machine has 2 vCPUs, 4 GB RAM, no swap — do not raise capacity).
 - The runner publishes no ports; it only dials the instance, over HTTPS.
 - The runner and its job containers pin the instance certificate
@@ -98,8 +132,9 @@ for git.
   both, so TLS verification passes either way. Since change 30 the
   canonical URL is the name, so the clone URLs Forgejo hands out — and
   the URLs Actions checkouts use — are name-based and resolve through
-  that pin. If the LAN address changes, update `/opt/forgejo/.env` and
-  the `--add-host` entry in `/srv/forgejo-runner/config.yaml` together.
+   that pin. If the LAN address changes, update the kube YAML files,
+   `/opt/forgejo/.env`, and the `--add-host` entry in
+   `/srv/forgejo-runner/config.yaml` together.
 - Job containers reach the instance and the internet. Verified: the
   runner downloaded `actions/checkout` from `data.forgejo.org`, a job
   pulled `node:20-bookworm` from the container registry, and

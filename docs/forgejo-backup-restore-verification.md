@@ -3,7 +3,9 @@
 Measured results for the backup script, the dump format, the restore
 procedure and the global encryption key. The instance setup and the CI
 measurements are in `docs/forgejo-operations-verification.md`; the
-problems found along the way are in `docs/forgejo-footguns.md`.
+problems found along the way are in `docs/forgejo-footguns.md`. The
+commands below predate the podman migration; current commands use
+`podman` and the `forgejo-forgejo` container name.
 
 ## Registry blobs out of the dump (change 37)
 

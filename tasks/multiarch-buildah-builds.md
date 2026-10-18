@@ -1,6 +1,11 @@
 # Multi-architecture image builds with buildah
 
-Status: proposed, not started. Recorded 2026-10-17.
+Status: template created 2026-10-18; target repository update pending.
+The template is one workflow file intended to replace the three current
+build workflows in `agent/container-build-test`. Recorded 2026-10-17.
+The host facts below predate the podman migration; see
+`docs/forgejo-podman-migration-verification.md` for the current
+job-container shape.
 
 ## What this task is
 
@@ -124,8 +129,8 @@ foreign-architecture image rather than just publish it.
 5. Which job image carries buildah: the current `apt-get install buildah`
    into `node:24-bookworm`, a `node:24-trixie` job image with buildah 1.39,
    or `quay.io/buildah/stable`? The last is on the host as `:latest`, which
-   breaks the pin rule, and `cleanup.sh` does not protect it because it is
-   not named in the compose file.
+    breaks the pin rule, and `cleanup.sh` does not protect it because it is
+    not named in the kube definitions.
 
 ## Proposed steps
 
@@ -134,7 +139,7 @@ foreign-architecture image rather than just publish it.
    package page and an anonymous pull report.
 2. Add a multi-architecture job to `agent/container-build-test`, triggered
    manually, keeping the existing single-architecture job intact.
-3. Verify the published tag from three places: the host daemon, a job
+3. Verify the published tag from three places: the host engine, a job
    container, and the package page.
 4. Re-check the three buildah workarounds on buildah 1.39.3 before changing
    the job image.
@@ -149,7 +154,7 @@ foreign-architecture image rather than just publish it.
 - Every action a workflow uses must exist as a mirrored repository on the
   instance (`DEFAULT_ACTIONS_URL=self`).
 - Runner capacity stays 2; the machine has 2 vCPU, 3 GB and no swap.
-- No privileged jobs, no Docker socket in job containers.
+- No privileged jobs, no engine socket in job containers.
 - Job containers pin the instance certificate; verification stays on.
 
 ## Evidence
@@ -158,7 +163,7 @@ foreign-architecture image rather than just publish it.
   single-architecture build, push and run cycle, and the buildah limits.
 - `docs/forgejo-ci-and-registry.md` — registry access, job container trust,
   `valid_volumes`.
-- `docs/memory/archive/2026-10-11-buildah-in-unprivileged-job-containers.md`
-  — rootless uid, `vfs`, no `RUN`.
+- `docs/memory/archive/2026-10-18-buildah-in-podman-job-containers.md`
+  — user namespace size, `CAP_SYS_ADMIN`, AppArmor, and `vfs`.
 - `docs/memory/archive/2026-10-11-actions-token-cannot-push-packages.md` —
   the push credential requirement.

@@ -1,0 +1,97 @@
+# Forgejo Actions runner pod, same box (operator decision). Replaces the
+# compose service of the same name. Started by
+# podman-kube@opt-forgejo-kube-forgejo-runner.yaml.service.
+# Mitigations unchanged from the compose definition:
+# - The engine socket is mounted for the runner daemon only. Job
+#   containers started by the runner never receive it.
+# - No privileged jobs, no engine-in-engine; job images are built with
+#   buildah inside jobs instead.
+# - Per-job CPU/memory limits and capacity 2 live in
+#   /srv/forgejo-runner/config.yaml (unchanged by the engine switch).
+# - No published ports: the runner only dials the instance, over HTTPS.
+# - The instance certificate is added to the runner's trust store so
+#   verification stays on (`insecure: false` in the runner config).
+apiVersion: v1
+kind: Pod
+metadata:
+  name: forgejo-runner
+  labels:
+    app: forgejo-runner
+spec:
+  # Same pin as the app pod: without it the daemon resolves
+  # forgejo.local to every address on the machine. The daemon dials the
+  # address stored in .runner, so this only removes a wrong-answer
+  # hazard; job containers get the pin from container.options instead.
+  hostAliases:
+    - ip: "192.0.2.40"
+      hostnames:
+        - "forgejo.local"
+  containers:
+    - name: forgejo-runner
+      # Pinned stable release. Bump deliberately; never use :latest.
+      image: data.forgejo.org/forgejo/runner:13.1.0
+      # The runner daemon must reach /run/podman/podman.sock (root-owned).
+      # Socket access is root-equivalent on the host either way, so the
+      # container runs as root; job containers it starts are unprivileged.
+      securityContext:
+        runAsUser: 0
+        runAsGroup: 0
+      # Build the merged bundle (public CAs + instance cert) before the
+      # daemon starts; exec keeps forgejo-runner as PID 1 for signals.
+      # The image is Alpine without the ca-certificates tooling, so
+      # update-ca-certificates is not available.
+      command:
+        - sh
+        - -c
+        - cat /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/forgejo-lan.crt > /tmp/ca-bundle.crt && exec forgejo-runner daemon --config /data/config.yaml
+      env:
+        # The runner downloads workflow actions with git (OpenSSL), which
+        # reads a CA bundle file, not the loose file in /etc/ssl/certs.
+        # Without this, action clones from the instance fail with "SSL
+        # certificate OpenSSL verify result: self-signed certificate".
+        # The bundle is rebuilt at every start (see command); the Go
+        # daemon keeps using the /etc/ssl/certs directory.
+        - name: GIT_SSL_CAINFO
+          value: /tmp/ca-bundle.crt
+        # Engine access is the Docker-compatible API only. The podman
+        # socket replaces the Docker socket; the runner talks to it with
+        # the same API. Job containers then get their user namespace from
+        # the server-side containers.conf (userns=auto), not from runner
+        # options: the runner's option parser rejects --userns=auto.
+        - name: DOCKER_HOST
+          value: unix:///run/podman/podman.sock
+      volumeMounts:
+        - name: data
+          mountPath: /data
+        - name: engine-socket
+          mountPath: /run/podman/podman.sock
+        # Required: the runner's Go TLS client trusts the instance only
+        # while this file is present in /etc/ssl/certs. Without the mount
+        # the daemon exits with "x509: certificate signed by unknown
+        # authority". Job containers get the same file plus
+        # GIT_SSL_CAINFO from config.yaml.
+        - name: instance-cert
+          mountPath: /etc/ssl/certs/forgejo-lan.crt
+          readOnly: true
+        - name: timezone
+          mountPath: /etc/timezone
+          readOnly: true
+        - name: localtime
+          mountPath: /etc/localtime
+          readOnly: true
+  volumes:
+    - name: data
+      hostPath:
+        path: /srv/forgejo-runner
+    - name: engine-socket
+      hostPath:
+        path: /run/podman/podman.sock
+    - name: instance-cert
+      hostPath:
+        path: /srv/forgejo-certs/forgejo.crt
+    - name: timezone
+      hostPath:
+        path: /etc/timezone
+    - name: localtime
+      hostPath:
+        path: /etc/localtime

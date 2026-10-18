@@ -11,9 +11,10 @@ setup is in `docs/forgejo-ci-and-registry.md`; the measured results are in
   container. With `START_SSH_SERVER=true` and `SSH_LISTEN_PORT=22`, the
   built-in SSH server collides with it and the container crashes
   (`bind: address already in use`). Fix: `SSH_LISTEN_PORT=2222` and
-  publish `2222:2222`. The compose file in this repo already reflects that.
+  publish `2222:2222`. The pod definition in this repo already reflects
+  that.
 - `forgejo dump` refuses to run as root: use
-  `docker exec -u 1000 -w /data forgejo forgejo dump`. Without `-w /data`
+  `podman exec -u 1000 -w /data forgejo-forgejo forgejo dump`. Without `-w /data`
   it tries to write to `/` and gets `permission denied`.
 - `forgejo dump` aborts with `Failed to include repositories` when
   `/data/git/repositories` does not exist yet (fresh install, no repos).
@@ -21,7 +22,7 @@ setup is in `docs/forgejo-ci-and-registry.md`; the measured results are in
 - The dump file is named `forgejo-dump-<timestamp>.zip`, not `dump-*`.
 - `forgejo admin user create` requires `--email`; without it: `email is
   not set`. With no mail server, any placeholder address works.
-- Avahi announces every interface by default, including Docker bridges.
+- Avahi announces every interface by default, including podman bridges.
   Without `allow-interfaces=<lan-if>`, `<hostname>.local` can resolve to
   `172.18.0.1` and connections fail. Pin it to the LAN interface.
 - Runner v13 renamed the register flag: `--token`, not
@@ -31,7 +32,8 @@ setup is in `docs/forgejo-ci-and-registry.md`; the measured results are in
   work with `forgejo-runner register`. Use the deprecated global token:
   `GET /api/v1/admin/runners/registration-token`.
 - The runner image runs as uid 1000 and cannot read the root-owned
-  Docker socket. The compose file sets `user: "0:0"` for it.
+  podman socket. The runner pod sets `runAsUser: 0` and
+  `runAsGroup: 0` for that mount.
 - Forgejo 16 has no file-creation API (`/files/...` is 404); push files
   with git.
 - Failed `forgejo-runner register` attempts can leave runner entries
@@ -60,6 +62,15 @@ setup is in `docs/forgejo-ci-and-registry.md`; the measured results are in
   With `valid_volumes: []` a `--volume` in `container.options` is
   dropped with `[…] is not a valid volume, will be ignored` and the job
   runs without the file. List the exact source path.
+- `generate-config` writes `env_file: .env`. When the daemon's working
+  directory has no such file, its first log line is
+  `Missing env file ".env" is ignored` — a warning, and the runner
+  declares normally, but it makes every start look like a fault. Set the
+  key to an empty value to stop the lookup; job environment belongs in
+  `container.envs` (change 46). The same generated block also keeps the
+  template's sample entries `A_TEST_ENV_NAME_1` and `A_TEST_ENV_NAME_2`
+  in `envs`, which the runner passes to every job container; delete them
+  in the same pass that sets `env_file` (change 47).
 - `GIT_SSL_CAINFO` with a relative path works for `git clone` and fails
   for `git push` with `Problem with the SSL CA cert (path? access
   rights?)`. Always give an absolute path.
@@ -82,34 +93,35 @@ setup is in `docs/forgejo-ci-and-registry.md`; the measured results are in
   reliably. Two paths, two failures. On the default bridge a container
   asks the LAN router, and no DNS server has a `.local` zone: the lookup
   returns nothing (`ENOTFOUND` for Node). On a user-defined network —
-  compose services and the per-job networks the runner creates — Docker
-  forwards to the host's systemd-resolved, which answers the machine's
+  pod services and the per-job networks the runner creates — the engine
+  can forward to the host's systemd-resolved, which answers the machine's
   own mDNS name *synthetically* with every address it has: the LAN
-  address first, then `172.18.0.1`, `172.17.0.1` and the link-local IPv6
-  addresses. Connections then fail or land on a bridge gateway. Fixed by
-  change 27: `--add-host=forgejo.local:<IP>` puts the name in every job
-  container's `/etc/hosts`, which the resolver reads before it queries
-  DNS, so the answer is the LAN address alone.
+  address first, then bridge gateways and link-local IPv6 addresses.
+  Connections then fail or land on a bridge gateway. Fixed by change 27:
+  `--add-host=forgejo.local:<IP>` puts the name in every job container's
+  `/etc/hosts`, which the resolver reads before it queries DNS, so the
+  answer is the LAN address alone.
 - The runner and Forgejo containers resolved `<hostname>.local` to all of
-  the machine's addresses (LAN address first, then the Docker bridge
-  gateways), because they get the host resolver's synthetic answer.
-  Nothing in the stack uses the name — the runner dials the address in
-  `.runner`, Forgejo calls itself through `localhost` — so this was a
-  hazard, not a fault. Change 28 pins the name with `extra_hosts` on both
-  compose services; the lookup now returns the LAN address alone.
+  the machine's addresses (LAN address first, then bridge gateways),
+  because they got the host resolver's synthetic answer. Nothing in the
+  stack uses the name — the runner dials the address in `.runner`,
+  Forgejo calls itself through `localhost` — so this was a hazard, not a
+  fault. Change 28 pins the name with `extra_hosts` on both services;
+  under podman the same pin is `hostAliases` on both pods, and the lookup
+  returns the LAN address alone.
 - `/srv/forgejo-runner/config.yaml` is generated. Re-running
   `forgejo-runner generate-config` on a live target wipes the
   `capacity`, `options`, `envs` and `valid_volumes` edits, including the
   `--add-host` entry; recipe step 16 has to be replayed after it.
-- `docker image prune --filter until=168h` does not mean "unused for a
+- `podman image prune --filter until=168h` does not mean "unused for a
   week". `until` matches the image's build date, so a freshly pulled
   image is usually months old and is deleted the day it arrives.
-  `docker container prune --filter until=` matches the container's
-  creation time, not the time it stopped. Docker keeps no last-used
+  `podman container prune --filter until=` matches the container's
+  creation time, not the time it stopped. The engine keeps no last-used
   time, so `cleanup.sh` maintains its own grace record.
-- `docker image prune -a` also removes the pinned stack images when the
-  compose stack is stopped, because nothing references them then.
-  `cleanup.sh` protects the images named in the compose file.
+- `podman image prune -a` also removes the pinned stack images when the
+  pod stack is stopped, because nothing references them then.
+  `cleanup.sh` protects the images named in the kube YAML files.
 - Forgejo serves one canonical URL (`ROOT_URL`) and warns every client
   whose Host header differs from it: "This Forgejo instance is
   configured to be served on …". There is no host allow-list, so
@@ -122,31 +134,27 @@ setup is in `docs/forgejo-ci-and-registry.md`; the measured results are in
   bundle and rejects the instance with `SSL certificate OpenSSL verify
   result: self-signed certificate (18)`. That matters because the
   runner downloads workflow actions with git. The runner image is
-  Alpine without `update-ca-certificates`, so the compose command
-  builds a merged bundle (public CAs + instance certificate) at every
-  start and `GIT_SSL_CAINFO` points at it.
+   Alpine without `update-ca-certificates`, so the runner pod command
+   builds a merged bundle (public CAs + instance certificate) at every
+   start and `GIT_SSL_CAINFO` points at it.
 - The runner's action cache (`/srv/forgejo-runner/.cache/act`) is not
   invalidated when `DEFAULT_ACTIONS_URL` changes: cached clones keep
   the old remote. Delete the directory after changing the setting.
-- The Docker daemon has its own registry trust store: files in
-  `/etc/docker/certs.d/<registry-host>/`. The runner's `/etc/ssl/certs`
+- The engine has its own registry trust store: files in
+  `/etc/containers/certs.d/<registry-host>/`. The runner's `/etc/ssl/certs`
   mount and the job containers' `GIT_SSL_CAINFO` /
   `NODE_EXTRA_CA_CERTS` do not cover it. Without a certificate there, a
   job whose `container.image` comes from the instance registry fails
-  before any authorization question: `docker pull … tls: failed to
+  before any authorization question: `podman pull … tls: failed to
   verify certificate: x509: certificate signed by unknown authority`.
-  Change 36 put the certificate there as
-  `/etc/docker/certs.d/forgejo.local/forgejo.crt` — the same file name
-  this setup uses elsewhere, not Docker's example name `ca.crt`. No
-  daemon restart is needed.
-- That directory is read by extension, not by fixed name
-  (`registry/registry.go` `ReadCertsDirectory`): `*.crt` is added to the
-  daemon's trust roots, `*.cert`/`*.key` are a client certificate pair
-  and must be paired, and any other name is ignored. Measured on the
-  target: `forgejo.crt` pulls fine, `ca.pem` fails with the same x509
-  error. The suffix is load-bearing; the stem is free. The base directory
-  is a compile-time constant on Linux (`/etc/docker/certs.d`), with no
-  daemon flag to move it in 26.1.5.
+  Change 43 put the certificate there as
+  `/etc/containers/certs.d/forgejo.local/forgejo.crt` — the same file name
+  this setup uses elsewhere, not Docker's example name `ca.crt`.
+- That directory is read by extension, not by fixed name: `*.crt` is
+  added to the engine's trust roots, `*.cert`/`*.key` are a client
+  certificate pair and must be paired, and any other name is ignored.
+  Measured on the target: `forgejo.crt` pulls fine, `forgejo.pem` fails
+  with the same x509 error. The suffix is load-bearing; the stem is free.
 - A 401 from the OCI endpoints is the authentication challenge, not a
   refusal. `GET /v2/…/manifests/<tag>` returns 401 with a
   `WWW-Authenticate: Bearer realm="…/v2/token"` header; fetching a token
@@ -162,12 +170,14 @@ setup is in `docs/forgejo-ci-and-registry.md`; the measured results are in
   `GetActionRepoPermission`, which only the git HTTP handler calls.
   Pushing needs a user token with `write:package`, kept in a repository
   secret.
-- `buildah` inside a job container needs three things: the environment
-  variable `_CONTAINERS_ROOTLESS_UID=1000` (otherwise it re-execs into a
-  user namespace and seccomp returns `unshare(CLONE_NEWUSER): Operation
-  not permitted`), `vfs` storage (`mount()` is EPERM and there is no
-  `/dev/fuse`), and no `RUN` instructions (both isolation modes call
-  `unshare(CLONE_NEWNS)` and fail).
+- `buildah` inside a podman job container needs a user namespace,
+  `CAP_SYS_ADMIN`, and an AppArmor exception. Set
+  `userns="auto:size=65536"` in `/etc/containers/containers.conf`; add
+  `--cap-add SYS_ADMIN --security-opt apparmor=unconfined` to the
+  runner's `container.options`. `vfs` storage stays required because
+  overlay-on-overlay is rejected and `/dev/fuse` is absent. The old
+  `_CONTAINERS_ROOTLESS_UID=1000` workaround is no longer needed: the job
+  runs as uid 0 inside its own namespace, so buildah does not re-exec.
 - `redhat-actions/buildah-build@v3` has no `content-path` input. Its
    `src/index.ts` calls `cli.copy(containerId, content)`, so the `content`
    list goes straight to `buildah copy` and buildah reads the **last**
@@ -181,3 +191,27 @@ setup is in `docs/forgejo-ci-and-registry.md`; the measured results are in
   mount. The two options are mutually exclusive — the config cheat sheet
   says the app exits at startup if both have a value — so the empty
   `SECRET_KEY` line in `app.ini` has to stay empty.
+- `podman-kube@.service` uses `%I`, which turns every `-` back into `/`.
+  The instance name is the YAML path with `/` replaced by `-`, so the YAML
+  file names must not contain hyphens. `forgejo-runner.yaml` would resolve
+  to `forgejo/runner.yaml` and fail.
+- `podman kube play` ignores `containers.conf` `userns`. That is useful
+  for the app and runner pods, which need host uid semantics for uid 1000
+  bind mounts, but it means the job-container namespace comes only from
+  containers created through the Docker-compatible API.
+- `userns="auto"` without a size can be too small. Debian job images can
+  size the namespace to 1024 ids, which leaves out `_apt` (uid 65534) and
+  breaks `apt-get` inside jobs. Use `userns="auto:size=65536"`.
+- The stock `podman-kube@.service` template has no `Restart=`. Killing an
+  app container stops the pod's service container, makes the unit
+  inactive, and runs `podman kube down`. The pod is removed and nothing
+  restarts it. `restartPolicy: Always` only restarts containers while the
+  pod stays up.
+- `podman kube play` names containers `<pod>-<container>`. The app
+  container is `forgejo-forgejo`; the runner container is
+  `forgejo-runner-forgejo-runner`. Scripts that exec into containers must
+  use those names.
+- `podman images --format {{.ID}}` returns short ids, while
+  `podman image inspect --format {{.Id}}` returns full `sha256:` ids.
+  Cleanup must compare the same form; mixing them silently makes images
+  look unused.

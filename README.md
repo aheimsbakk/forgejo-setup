@@ -1,12 +1,12 @@
 # Forgejo LAN Install
 
 A tested recipe and deployment files for running [Forgejo](https://forgejo.org),
-a self-hosted git forge, in Docker on a Debian 13 machine. The instance
+a self-hosted git forge, in podman on a Debian 13 machine. The instance
 serves HTTPS on the local network only.
 
 What it gives you:
 
-- Forgejo 16.0.5 (pinned) in Docker, started on boot
+- Forgejo 16.0.5 (pinned) in podman, started on boot
 - Web UI on port 443 over HTTPS, port 80 redirects to it, git-over-SSH
   on port 2222 — all bound to the LAN address only, never to the public
   interfaces of the machine
@@ -51,7 +51,7 @@ as root on it.
   Site Administration, or with:
   ```bash
   ssh -i <key> root@<target-ip> \
-    'docker exec -u 1000 forgejo forgejo admin user create --username <name> --password <pw> --email <name>@forgejo.invalid'
+    'podman exec -u 1000 forgejo-forgejo forgejo admin user create --username <name> --password <pw> --email <name>@forgejo.invalid'
   ```
 
 ## CI/CD
@@ -59,8 +59,9 @@ as root on it.
 Forgejo Actions is enabled. A runner shares the machine with the
 instance: workflows with `runs-on: docker` run in `node:24-bookworm`
 containers, two jobs at a time, each limited to 1 CPU and 1 GB RAM.
-Build container images with buildah inside jobs; docker-in-docker and
-privileged jobs are not available.
+Build container images with buildah inside jobs. Containerfile `RUN`
+steps work in the job's user namespace; engine-in-engine and privileged
+jobs are not available.
 
 - The instance certificate is already inside job containers at
   `/etc/ssl/certs/forgejo-lan.crt`, and `GIT_SSL_CAINFO` points there,
@@ -84,8 +85,11 @@ privileged jobs are not available.
   and a later job can run inside it:
   `container.image: forgejo.local/<owner>/<repo>:<tag>`. Pushing needs
   a repository secret holding a user token that can write packages;
-  the Actions token cannot. The steps are in "Container registry
-  (build, push, use)" in `docs/forgejo-ci-and-registry.md`.
+  the Actions token cannot. The default multiarch template is
+  `templates/build-multiarch.yml`; it replaces the three current build
+  workflows and pushes `latest`. The steps are in "Container registry
+  (build, push, use)" and "Default multiarch build template" in
+  `docs/forgejo-ci-and-registry.md`.
 
 Recommendation: if you ever allow pull requests from forks, disable or
 gate fork PR workflows in each repository's Actions settings. By default
@@ -117,33 +121,36 @@ itself:
 
 - A cleanup run happens daily at 04:15 UTC. It removes images no
   container has used for 7 days, containers outside the Forgejo stack
-  that have been stopped for 7 days, unused networks, and build cache
-  older than 7 days.
+  that have been stopped for 7 days, and unused networks older than
+  7 days.
 - Volumes are never removed, and the Forgejo and runner images named in
-  the compose file are never removed.
+  the pod definitions are never removed.
 - Run it by hand and read what it did:
   ```bash
   ssh -i <key> root@<target-ip> 'systemctl start forgejo-cleanup.service'
   ssh -i <key> root@<target-ip> 'journalctl -u forgejo-cleanup.service -n 40'
   ```
-- See what Docker holds at any time:
+- See what podman holds at any time:
   ```bash
-  ssh -i <key> root@<target-ip> 'docker system df'
+  ssh -i <key> root@<target-ip> 'podman system df'
   ```
 
 ## Configuration
 
-- The only per-machine setting is the LAN address, in
-  `/opt/forgejo/.env` on the instance (`LAN_IP=<your-lan-ip>`).
-- The runner repeats that address in
+- The per-machine settings are the LAN address and the LAN resolver.
+  `/opt/forgejo/.env` keeps the address for `gen-cert.sh`
+  (`LAN_IP=<your-lan-ip>`). The pod definitions and
+  `/etc/containers/containers.conf` carry the real addresses literally.
+- The runner repeats the LAN address in
   `/srv/forgejo-runner/config.yaml` (`--add-host=forgejo.local:<ip>`),
-  which is how job containers resolve the name. Change both when the
-  address changes; the compose file derives its own pin from `LAN_IP`, so
-  it follows automatically.
-- All other Forgejo settings live in `/opt/forgejo/docker-compose.yml`
+  which is how job containers resolve the name. Change the pod
+  definitions, `/opt/forgejo/.env`, and the runner config together when
+  the address changes.
+- All other Forgejo settings live in `/opt/forgejo/kube/forgejo.yaml`
   as `FORGEJO__*` variables. After editing:
   ```bash
-  ssh -i <key> root@<target-ip> 'cd /opt/forgejo && docker-compose up -d'
+  ssh -i <key> root@<target-ip> \
+    'systemctl restart podman-kube@opt-forgejo-kube-forgejo.yaml.service'
   ```
 - The certificate and key are `/srv/forgejo-certs/forgejo.crt` and
   `forgejo.key`. Create or renew them with

@@ -1,8 +1,8 @@
 # Forgejo Operations
 
 Day-2 notes for the instance installed by `docs/forgejo-install-recipe.md`:
-backups and restores, disk cleanup, and how client devices and the Docker
-daemon trust the certificate. The problems found are in
+backups and restores, disk cleanup, and how client devices and the
+engine trust the certificate. The problems found are in
 `docs/forgejo-footguns.md`; the runner, registry and job-container setup is
 in `docs/forgejo-ci-and-registry.md`; the measured results are in
 `docs/forgejo-operations-verification.md` and
@@ -61,27 +61,26 @@ checks that prove the database and the repositories came back.
   45 minutes after the backup, so a restore point exists before anything
   is deleted.
 - Removes: untagged images; tagged images no container references, once
-  they have been unused for 7 days; containers outside the compose stack
-  stopped for 7 days or more; unused networks and the build cache older
-  than 7 days.
+  they have been unused for 7 days; containers outside the podman kube
+  stack stopped for 7 days or more; unused networks older than 7 days.
 - Never removes: volumes (they can hold job data), containers labelled
-  as part of the compose stack, and any image named by
-  `/opt/forgejo/docker-compose.yml`. The protected image list is read
-  from the compose file at run time, so it follows version bumps.
+  with `PODMAN_SYSTEMD_UNIT`, and any image named by
+  `/opt/forgejo/kube/*.yaml`. The protected image list is read from the
+  kube YAML files at run time, so it follows version bumps.
 - Grace tracking: `/var/lib/forgejo-cleanup/unused-images.tsv` records
   the day each unused image was first seen. An image is removed only
   after 7 days in that file. The file is rewritten every run, so it
   stays small.
-- A run that cannot read the compose file removes nothing and exits 1.
+- A run that cannot read the kube directory removes nothing and exits 1.
 - The first run deletes nothing; it only starts the grace record.
-- Each run logs `docker system df` before and after:
+- Each run logs `podman system df` before and after:
   `journalctl -u forgejo-cleanup.service`.
 - Verified on the first target (changes 24–26): the first run deleted
   nothing and wrote grace records for `debian:bookworm` and
   `node:20-bookworm`; a throwaway container and a throwaway image with
   a back-dated record were both removed in a later run; the stack
   images, the running containers and the `forgejo_default` network were
-  untouched. `docker system df` showed 1.451 GB of images with
+  untouched. The Docker-era `docker system df` showed 1.451 GB of images with
   1.212 GB (83%) reclaimable.
 
 
@@ -112,6 +111,14 @@ returns whenever the certificate is regenerated.
 ## Pending
 
 - Remote copy of `/srv/forgejo-backups` (operator will set up).
+- Restart enforcement for the two `podman-kube@` units — on hold, not
+  scheduled. The stock template has no `Restart=` (it is `Type=notify`),
+  so a stopped pod stays down until started. Measured 2026-10-18 on the
+  runner unit: a manual `systemctl stop` and `podman kill` of the runner
+  container both leave the unit inactive and the pod removed. The
+  leading fix is a drop-in with `Restart=always` and `RestartSec=10` on
+  both units; it is untested. See
+  `docs/forgejo-podman-migration-verification.md`, open question 4.
 - Test the restore procedure end-to-end on a scratch machine.
 - Certificate renewal: the current certificate runs until 2031-10-08.
   Re-run `gen-cert.sh` before that date and re-pin every client, since a

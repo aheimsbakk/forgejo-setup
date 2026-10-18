@@ -17,6 +17,7 @@ script loads `.env` and only prompts for what is missing.
 | Parameter | Used for | Example (documentation range) |
 |-----------|----------|-------------------------------|
 | `IP` | target address, port bindings, name pins | `192.0.2.40` |
+| `LAN_RESOLVER` | DNS server used by containers | `192.0.2.1` |
 | `ADMIN_USER` | Forgejo admin account | `admin` |
 | `ADMIN_PASSWORD` | Forgejo admin password; never committed | (set in `.env`) |
 | `KEY` | SSH private key path | `tmp/ssh/id_ed2219` |
@@ -33,10 +34,15 @@ script loads `.env` and only prompts for what is missing.
 
 ## Decisions
 
-- Forgejo runs in Docker, using the official image
+- Forgejo runs in podman, using the official image
   `codeberg.org/forgejo/forgejo`, pinned to a stable release (16.0.5).
-- Docker engine and Compose come from Debian packages (`docker.io`,
-  `docker-compose`); no third-party apt repos.
+- The podman engine comes from the Debian package (`podman`, plus
+  `catatonit` for the pause image); no third-party apt repos. The app
+  and the runner are Kubernetes pod YAML under `/opt/forgejo/kube/`,
+  started by the stock `podman-kube@.service` template — no quadlet, no
+  compose. The motivating goal: job containers get a user namespace, so
+  nested buildah `RUN` works without privileged containers (changes
+  39–45).
 - Access: HTTPS only, LAN only. No domain, no public exposure. The
   certificate is self-signed (created on the target by `gen-cert.sh`) and
   pinned by every client: browsers, git clients, the runner and the job
@@ -48,12 +54,13 @@ script loads `.env` and only prompts for what is missing.
   the host also has a public IPv6 address.
 - Storage: bind mount `/srv/forgejo` on the host to `/data` in the
   container; built-in SQLite; no separate database server.
-- All Forgejo configuration lives in `forgejo/docker-compose.yml` as
-  `FORGEJO__*` environment variables. The LAN IP is the only variable,
-  supplied by `/opt/forgejo/.env`.
+- All Forgejo configuration lives in `forgejo/kube/forgejo.yaml` as
+  `FORGEJO__*` environment variables. The LAN address is written into
+  the YAML literally (podman kube play has no variable interpolation);
+  `/opt/forgejo/.env` keeps it for `gen-cert.sh`.
 - The hostname is `forgejo`, so the mDNS name is `forgejo.local`. That
   name appears in six places: the hostname, the certificate subject
-  alternative names, the compose `extra_hosts` pin, the runner's
+  alternative names, the pod `hostAliases` pin, the runner's
   `--add-host` option, the canonical `ROOT_URL`/`DOMAIN`, and the
   runner's registered instance URL. A different hostname means changing
   all six.
@@ -64,9 +71,12 @@ script loads `.env` and only prompts for what is missing.
   the address still serves content and git, browsers just see the
   warning there.
 - Container disk use is bounded by a daily cleanup job: images unused
-  for 7 days, stopped containers outside the compose stack, unused
-  networks and the build cache. Volumes are never removed, and the
-  images named by the compose file are never removed.
+  for 7 days, stopped containers outside the stack, and unused
+  networks. Volumes are never removed, and the images named by the kube
+  definitions are never removed.
+- Restart enforcement for the pod units is not configured yet. The stock
+  `podman-kube@.service` template has no `Restart=`; a stopped pod stays
+  down until an operator starts it again.
 - Workflow actions are fetched from the instance itself
   (`DEFAULT_ACTIONS_URL=self`): a `uses:` reference without a host is
   cloned from this instance's repositories. The operator mirrors every
@@ -85,10 +95,11 @@ script loads `.env` and only prompts for what is missing.
   a larger page only makes the HTML response bigger.
 - The instance registry is part of the pipeline: a job builds an image,
   pushes it to `forgejo.local/<owner>/<repo>`, and a later job runs
-  inside it. Two things follow. The Docker daemon on the host must trust
-  the instance certificate for its own registry
-  (`/etc/docker/certs.d/forgejo.local/forgejo.crt`, change 36), because the
-  daemon performs every job-image pull. And pushing needs a user token
+  inside it. Two things follow. The engine on the host must trust the
+  instance certificate for its own registry
+  (`/etc/containers/certs.d/forgejo.local/forgejo.crt`, change 43; the
+  Docker-era path from change 36 is gone with the engine), because the
+  engine performs every job-image pull. And pushing needs a user token
   with `write:package` kept in a repository secret: the Actions token
   authenticates against the registry but cannot write packages.
 
@@ -134,6 +145,15 @@ script loads `.env` and only prompts for what is missing.
 | 36 | 2026-10-11 | Docker on the host trusts the instance's own registry: `/etc/docker/certs.d/forgejo.local/forgejo.crt`, a copy of `/srv/forgejo-certs/forgejo.crt`. The daemon pulls every job image, including images the pipeline pushed to the instance registry, and it reads its trust from this directory, not from the runner's `/etc/ssl/certs` mount. The file keeps the `forgejo.crt` name used everywhere else in this setup; the daemon selects these files by extension, so the `.crt` suffix is required and `ca.crt` is only Docker's documented example name | `mkdir -p /etc/docker/certs.d/forgejo.local && cp /srv/forgejo-certs/forgejo.crt /etc/docker/certs.d/forgejo.local/forgejo.crt` (mode 644; no daemon restart needed) | `docker pull forgejo.local/agent/container-build-test:<tag>` succeeds after the local copy is deleted; before the file the same command failed with `x509: certificate signed by unknown authority`, and the same copy renamed to `ca.pem` fails the same way; the file's SHA-256 certificate fingerprint matches `tmp/certs/forgejo.crt`; CI run 40 then pulled the image with `username=` (no credentials) and the job ran inside it |
 | 37 | 2026-10-11 | Backup dumps leave out the container registry blobs: `/opt/forgejo/backup.sh` now runs `forgejo dump --skip-package-data`. The images are rebuildable by CI and were the second largest part of a dump. The package records stay in the database, so a restore lists versions whose files are absent; the package owner's cleanup rules (web UI only, no API route) clear those records and CI re-pushes the images | copy updated `forgejo/backup.sh` to `/opt/forgejo/` (mode 755); `/opt/forgejo/backup.sh` | dump log line `Skipping package data`; new dump 63,054,363 bytes against 85,498,046 for a full dump taken the same day; `grep -c data/packages` returns 0 on the new dump and 36 on the full one; `package`/`package_version`/`package_file`/`package_blob` rows still present in `forgejo-db.sql` (1/8/21/18) |
 | 38 | 2026-10-11 | `SECRET_KEY` was empty in `app.ini`, so the instance had no stable key for the data Forgejo encrypts at rest. Set with `FORGEJO__security__SECRET_KEY_URI=file:/etc/forgejo/secret_key` and a read-only single-file mount of `/opt/forgejo/secrets/secret_key` (directory 750, file 640 `root:1000`, so the container's uid 1000 reads it). The value comes from `forgejo generate secret SECRET_KEY` and sits outside the data dir: it is in no dump and not in the tracked compose file. `SECRET_KEY` and `SECRET_KEY_URI` must not both have a value | copy updated `forgejo/docker-compose.yml`; create the key file (step 6c); `cd /opt/forgejo && docker-compose up -d forgejo` | `app.ini` shows `SECRET_KEY_URI = file:/etc/forgejo/secret_key` with `SECRET_KEY` still empty; `docker exec -u 1000 forgejo sh -c "wc -c < /etc/forgejo/secret_key"` returns 43; app log has no `[E]`/`[F]` lines; `/api/v1/version` 200, basic auth 200, token auth 200, `git ls-remote` over HTTPS returns `ad049345c139…`; the runner logged 3 `failed to fetch task` errors during the recreate and 0 afterwards |
+| 39 | 2026-10-18 | podman 5.4.2 installed from Debian alongside Docker for measurement, then made the only engine: `catatonit` (kube play builds the local pause image with it), `podman.socket` enabled (the runner's Docker-compatible API), `/etc/containers/containers.conf` with `userns="auto:size=65536"` (job containers get a user namespace; the explicit size is required — plain `auto` sizes to 1024 ids and breaks apt's `_apt` user inside jobs) and `dns=["<LAN resolver>"]` (the host's systemd-resolved stub 127.0.0.53 is unreachable from a container namespace); `/etc/subuid`/`/etc/subgid` filled for `root` and `containers` (the `containers` user owns the auto-namespace id pool; Debian ships both files empty) | `apt-get install -y podman catatonit && systemctl enable --now podman.socket`; write `forgejo/containers.conf` to `/etc/containers/containers.conf`; replace the placeholder resolver with `LAN_RESOLVER`; write subuid/subgid ranges | compat API (`DOCKER_HOST=unix:///run/podman/podman.sock`) container shows `uid_map 0 100000 65536`; `podman kube play` pods keep the initial namespace (uid_map `0 0 4294967295`), so the uid 1000 bind mounts are unaffected |
+| 40 | 2026-10-18 | App and runner moved to Kubernetes pod definitions: `forgejo/kube/forgejo.yaml` and `forgejo/kube/runner.yaml` deployed to `/opt/forgejo/kube/`, started and enabled through the stock `podman-kube@.service` template. The instance name is the YAML path with `/` replaced by `-`; file names must not contain hyphens, because `%I` turns every `-` back into `/` (a `forgejo-runner.yaml` resolves to `forgejo/runner.yaml` and fails). The redirector listens on 8080 inside the container (`PORT_TO_REDIRECT=8080`, published as 80): the Forgejo server runs as uid 1000 and podman leaves `net.ipv4.ip_unprivileged_port_start` at 1024, where Docker had set it to 0 | copy `forgejo/kube/*.yaml`; `systemctl start && enable podman-kube@opt-forgejo-kube-forgejo.yaml.service podman-kube@opt-forgejo-kube-runner.yaml.service` | `ss` shows 443/80/2222 on the LAN address only (`hostIP` on `containerPort` is honored); `https://forgejo.local/` 200, `http://` 307 to the canonical URL, `/api/v1/version` 16.0.5, certificate SANs unchanged, SSH 2222 answers, runner log `declared successfully` |
+| 41 | 2026-10-18 | Runner engine access switched without re-registration: the runner pod mounts `/run/podman/podman.sock` and sets `DOCKER_HOST=unix:///run/podman/podman.sock`. `/srv/forgejo-runner/.runner` and `config.yaml` are engine-independent and were kept | copy `forgejo/kube/runner.yaml`; start the runner unit | runner listed `idle`, log `declared successfully`; no re-registration was needed |
+| 42 | 2026-10-18 | Job containers gained the user namespace plus the two permissions nested buildah needs: `--cap-add SYS_ADMIN` and `--security-opt apparmor=unconfined` added to the runner's `container.options` (the userns itself comes from containers.conf server-side; the runner's option parser rejects `--userns=auto`). Debian's `containers-default` AppArmor profile denies `userns_create` and `mount` even with CAP_SYS_ADMIN, hence the exception | `sed` on the `options` key of `/srv/forgejo-runner/config.yaml` | CI checklist run: job `uid_map 0 296608 65536`, `CapEff` includes SYS_ADMIN, `attr/current` `unconfined`, `unshare -m` OK, tmpfs mount OK, name pin and both CA variables intact, memory limit 1 GiB |
+| 43 | 2026-10-18 | Engine registry trust moved to podman's path: `/etc/containers/certs.d/forgejo.local/forgejo.crt`. The `.crt` extension rule carries over: renaming the file to `.pem` breaks verification (measured) | `mkdir -p /etc/containers/certs.d/forgejo.local && cp /srv/forgejo-certs/forgejo.crt …` | anonymous `podman pull forgejo.local/agent/container-build-test:multiarch` succeeds; with the file renamed to `.pem` the same pull fails `x509: certificate signed by unknown authority` |
+| 44 | 2026-10-18 | `backup.sh` and `cleanup.sh` rewritten for podman: exec target `forgejo-forgejo` (kube play names containers `<pod>-<name>`); the protected image list is read from `image:` lines in `/opt/forgejo/kube/*.yaml`; stack containers are recognized by the `PODMAN_SYSTEMD_UNIT` label; image ids compared in full `sha256:` form (`podman images --format {{.ID}}` returns short ids, `inspect {{.Id}}` full ones — mixing them silently defeats the in-use check); the build-cache step dropped (buildah keeps no engine build cache) | copy updated `forgejo/backup.sh`, `forgejo/cleanup.sh` (mode 755) | `systemctl start forgejo-backup.service` produced a dump with `Skipping package data`; cleanup run protected the pause image and both stack images, started grace records only for genuinely unused images |
+| 45 | 2026-10-18 | Docker removed: containers stopped, packages `docker.io`, `docker-compose`, `containerd`, `runc` purged, `/var/lib/docker` and `/etc/docker` deleted, `FORWARD` policy set to ACCEPT (Docker had set DROP; netavark relies on ACCEPT plus its own nft table). During the coexistence window Docker's `FORWARD` DROP also blocked podman bridge traffic — a temporary `DOCKER-USER` accept for podman's 10/8 space was needed and is gone with the engine | `systemctl disable --now docker`; `apt-get purge -y docker.io docker-compose containerd runc && apt-get autoremove -y`; `rm -rf /var/lib/docker /etc/docker`; `iptables -P FORWARD ACCEPT` | `which docker` empty; only the `inet netavark` nft table remains; full verification re-run green (web, redirect, SSH, runner declared, checklist and use-image CI runs success); new containers use `crun` |
+| 46 | 2026-10-18 | Runner `env_file` turned off. `generate-config` sets `env_file: .env`, and with no such file in the daemon's working directory the first log line at every start is `Missing env file ".env" is ignored` (warning; the runner declares normally). Job environment comes from `container.envs`, so the file is not wanted; an empty value means the runner does not look | `sed` on the `env_file` key of `/srv/forgejo-runner/config.yaml` (backup kept at `/root/forgejo-runner-config.yaml.2026-10-18.bak`, mode 600); restart the runner unit | runner log starts at `Starting runner daemon`, no warning, then `declared successfully` and `[poller] launched`; unit `active` |
+| 47 | 2026-10-18 | Sample job environment removed from the runner config. `generate-config` leaves `A_TEST_ENV_NAME_1: a_test_env_value_1` and `A_TEST_ENV_NAME_2: a_test_env_value_2` under `container.envs`, and the runner passes every `envs` entry into job containers | delete the two lines from `/srv/forgejo-runner/config.yaml` (backup kept at `/root/forgejo-runner-config.yaml.2026-10-18-2.bak`, mode 600); restart the runner unit | `grep` finds no `A_TEST_ENV_NAME` entry; `GIT_SSL_CAINFO` and `NODE_EXTRA_CA_CERTS` still listed; runner log `declared successfully` and `[poller] launched` |
 
 Operator-side change (not on the target): the target address was added
 to the operator's `known_hosts` by `StrictHostKeyChecking=accept-new`.
@@ -147,13 +167,17 @@ to the operator's `known_hosts` by `StrictHostKeyChecking=accept-new`.
 - `docs/forgejo-ci-and-registry.md` — the Actions runner, the container
   registry, access from job containers, and mirrored workflow actions.
 - `docs/forgejo-operations.md` — backup and restore, disk cleanup, and how
-  client devices and the Docker daemon trust the certificate.
+  client devices and the engine trust the certificate.
 - `docs/forgejo-restore.md` — how to bring an instance back from a dump.
 - `docs/forgejo-operations-verification.md` — what each change set was
   checked against, with the observed output.
 - `docs/forgejo-backup-restore-verification.md` — the same measurements
   for the backup script, the dump format, the restore drill and the
   global encryption key.
+- `docs/forgejo-podman-migration-verification.md` — the measurements
+  behind the Docker-to-podman migration (changes 39–45): the user
+  namespace probes, the restart-semantics measurement and the
+  post-teardown verification.
 - `docs/reports/` — dated records of investigations, kept as history and
   not maintained afterwards. The container pipeline record is
   `docs/reports/2026-10-11-container-pipeline-build-push-use.md`.
@@ -163,6 +187,6 @@ to the operator's `known_hosts` by `StrictHostKeyChecking=accept-new`.
 The commands, in order, are in `docs/forgejo-install-steps.md`. Ask the
 operator for the parameters first; the script prompts for the password so
 it never lands in shell history or this repo. The change table records the
-first target's move from HTTP to HTTPS as changes 18-23; the compose file
-in this repo is already HTTPS, so the steps reach that same state on a
-fresh machine in one pass.
+first target's move from HTTP to HTTPS as changes 18-23 and from Docker
+to podman as changes 39-45; the files in this repo are already in the
+final state, so the steps reach it on a fresh machine in one pass.
