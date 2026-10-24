@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.10.1] - 2026-10-24
+
+- **why:** The UI and API showed `ssh://git@localhost:2222/...` as the SSH clone URL. `[server] SSH_DOMAIN` forms that URL alone, does not inherit `DOMAIN`, and defaults to `localhost`.
+- **model:** kompis/qwen3.8-flash-next-iq3_s
+- **tags:** forgejo, ssh, clone-url, deploy
+
+### Fixed
+
+- `ansible/templates/kube/forgejo.yaml.j2`: set `FORGEJO__server__SSH_DOMAIN=forgejo.local`; the repo API `ssh_url` and the clone button now read `ssh://git@forgejo.local:2222/...`. Applied with `--tags forgejo` (pod restart), rerun and `--check` `changed=0`
+- The template comment that claimed `DOMAIN` keeps SSH clone URLs on the name; it does not
+- `CONTRIBUTING.md`: playbook commands pointed at `../../.venv`, which does not resolve from `ansible/`; now `../.venv`
+
 ## [0.10.0] - 2026-10-18
 
 - **why:** The install procedure was a 230-line bash recipe an operator ran by hand. An idempotent Ansible playbook converges the same state, proves it with `--check` before touching anything, and re-runs clean on a converged system.
