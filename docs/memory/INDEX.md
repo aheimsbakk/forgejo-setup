@@ -30,3 +30,4 @@
 | forgejo-runner generate-config sets env_file: .env; empty value stops the start warning | warning | medium | forgejo, actions, runner, config, env-file | | archive/2026-10-18-runner-env-file-empty.md |
 | Reproduce procedure is now the Ansible playbook in ansible/ | decision | high | ansible, deployment, playbook, idempotent, uv | | archive/2026-10-18-ansible-playbook-replaces-steps.md |
 | Ansible gotchas hit during the playbook build: fake handlers, tags, globs, facts | warning | medium | ansible, idempotent, tags, check-mode | | archive/2026-10-18-ansible-gotchas-fake-handlers-tags.md |
+| Forgejo SSH clone URL comes from SSH_DOMAIN, default localhost | warning | high | forgejo, ssh, clone-url, app-ini, server-config | | archive/2026-10-24-ssh-clone-url-from-ssh-domain.md |

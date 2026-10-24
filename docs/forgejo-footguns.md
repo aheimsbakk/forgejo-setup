@@ -13,6 +13,11 @@ setup is in `docs/forgejo-ci-and-registry.md`; the measured results are in
   (`bind: address already in use`). Fix: `SSH_LISTEN_PORT=2222` and
   publish `2222:2222`. The pod definition in this repo already reflects
   that.
+- The SSH clone URL in the UI and the repository API is built from
+  `[server] SSH_DOMAIN`, which does not inherit `DOMAIN` and defaults
+  to `localhost`. With only `DOMAIN` set, every clone/push hint reads
+  `ssh://git@localhost:2222/...` (recipe change 49). Fix:
+  `FORGEJO__server__SSH_DOMAIN=forgejo.local` in the pod definition.
 - `forgejo dump` refuses to run as root: use
   `podman exec -u 1000 -w /data forgejo-forgejo forgejo dump`. Without `-w /data`
   it tries to write to `/` and gets `permission denied`.

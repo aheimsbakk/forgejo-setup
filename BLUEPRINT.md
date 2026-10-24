@@ -139,7 +139,11 @@ decisions behind them.
   reach it by name get no mismatch warning. The LAN address still
   serves content and git, but is not canonical. TLS settings point at
   the certificate directory; the plain HTTP listener only redirects to
-  the canonical HTTPS URL. The runner and its job containers receive a
+  the canonical HTTPS URL. The SSH endpoint name that forms the SSH
+  clone URL is set to the LAN name too: it is not derived from the web
+  address and the built-in default names a loopback host, which puts a
+  wrong clone hint in front of every client. The runner and its job
+  containers receive a
   read-only copy of the certificate and are told to trust it. The
   service definition and the job-container settings both map the
   instance name to the LAN address, so the name resolves where
