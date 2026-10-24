@@ -66,9 +66,9 @@ uv venv .venv
 uv pip install --python .venv/bin/python -r ansible/requirements.txt -r ansible/requirements-lint.txt
 cd ansible
 cp hosts.yml.example hosts.yml   # fill in address, resolver, key path
-../../.venv/bin/ansible-playbook site.yml --check --diff   # verify only
-../../.venv/bin/ansible-playbook site.yml                 # apply
-../../.venv/bin/ansible-playbook site.yml --tags verify   # one-shot checks
+../.venv/bin/ansible-playbook site.yml --check --diff   # verify only
+../.venv/bin/ansible-playbook site.yml                 # apply
+../.venv/bin/ansible-playbook site.yml --tags verify   # one-shot checks
 ```
 
 Lint from the repo root with `.venv/bin/ansible-lint ansible/site.yml`.
