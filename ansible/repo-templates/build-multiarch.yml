@@ -1,0 +1,103 @@
+name: build-multiarch
+
+# Set REGISTRY to your instance name; the Forgejo branch below assumes
+# the recipe default lan_name (forgejo.local).
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+  build:
+    name: build and push multiarch image
+    runs-on: ${{ github.server_url == 'https://github.com' && 'ubuntu-latest' || 'docker' }}
+    env:
+      REGISTRY: ${{ github.server_url == 'https://github.com' && 'ghcr.io' || 'forgejo.local' }}
+      IMAGE_NAME: ${{ github.repository }}
+      IMAGE_TAG: latest
+      BUILDAH_ISOLATION: chroot
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install buildah on GitHub
+        if: github.server_url == 'https://github.com'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y buildah
+
+      - name: Install buildah on Forgejo
+        if: github.server_url != 'https://github.com'
+        run: |
+          apt-get update
+          apt-get install -y buildah
+
+      - name: Configure buildah storage on GitHub
+        if: github.server_url == 'https://github.com'
+        run: |
+          sudo mkdir -p /etc/containers
+          printf '[storage]\ndriver = "vfs"\ngraphroot = "/var/lib/containers/storage"\nrunroot = "/run/containers/storage"\n' | sudo tee /etc/containers/storage.conf >/dev/null
+
+      - name: Configure buildah storage on Forgejo
+        if: github.server_url != 'https://github.com'
+        run: |
+          mkdir -p /etc/containers
+          printf '[storage]\ndriver = "vfs"\ngraphroot = "/var/lib/containers/storage"\nrunroot = "/run/containers/storage"\n' > /etc/containers/storage.conf
+
+      - name: Enable QEMU for foreign architecture RUN steps
+        if: github.server_url == 'https://github.com'
+        run: docker run --privileged --rm tonistiigi/binfmt --install arm64
+
+      - name: Build and push
+        env:
+          REGISTRY_TOKEN: ${{ secrets.REGISTRY_TOKEN || github.token }}
+          REGISTRY_TOKEN_SET: ${{ secrets.REGISTRY_TOKEN }}
+        run: |
+          set -euo pipefail
+
+          if [ ! -f Containerfile ] && [ ! -f Dockerfile ]; then
+            echo "No Containerfile or Dockerfile found." >&2
+            exit 1
+          fi
+
+          if [ "$REGISTRY" = "forgejo.local" ] && [ -z "$REGISTRY_TOKEN_SET" ]; then
+            echo "Set REGISTRY_TOKEN to a user token with write:package." >&2
+            exit 1
+          fi
+
+          image_name="$IMAGE_NAME"
+          if [ "$REGISTRY" = "ghcr.io" ]; then
+            image_name=$(printf '%s' "$image_name" | tr '[:upper:]' '[:lower:]')
+          fi
+
+          image="${REGISTRY}/${image_name}:${IMAGE_TAG}"
+          authfile=/tmp/buildah-auth.json
+          trap 'rm -f "$authfile"' EXIT
+          export REGISTRY_AUTH_FILE="$authfile"
+
+          printf '{"auths":{"%s":{"auth":"%s"}}}\n' \
+            "$REGISTRY" \
+            "$(printf '%s:%s' "$GITHUB_ACTOR" "$REGISTRY_TOKEN" | base64 -w0)" \
+            > "$authfile"
+
+          for arch in amd64 arm64; do
+            buildah bud \
+              --platform "linux/${arch}" \
+              --format docker \
+              -t "${image}-${arch}" \
+              .
+            buildah push --authfile "$authfile" "${image}-${arch}"
+          done
+
+          # Buildah 1.28.2 on the Forgejo runner does not send a local
+          # manifest list with `push --all`. Push the architecture images
+          # first, then assemble and push the index from registry refs.
+          buildah manifest create multiarch-list
+          for arch in amd64 arm64; do
+            buildah manifest add multiarch-list "${image}-${arch}"
+          done
+          buildah manifest push --all --authfile "$authfile" multiarch-list "docker://${image}"
