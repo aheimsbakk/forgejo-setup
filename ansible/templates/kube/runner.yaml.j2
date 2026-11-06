@@ -25,7 +25,7 @@ spec:
   hostAliases:
     - ip: "{{ lan_ip }}"
       hostnames:
-        - "forgejo.local"
+        - "{{ lan_name }}"
   containers:
     - name: forgejo-runner
       # Pinned stable release. Bump deliberately; never use :latest.

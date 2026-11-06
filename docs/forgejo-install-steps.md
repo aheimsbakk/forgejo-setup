@@ -69,7 +69,7 @@ You need: a Debian 13 target, root SSH access with a key, and
    This runs one backup (and checks the dump leaves registry blobs
    out), one cleanup, and the engine's registry-trust probe.
 
-The playbook fetches the public certificate to `tmp/certs/forgejo.crt`
+The playbook fetches the public certificate to `ansible/certs/forgejo/forgejo.crt`
 on the control machine. Trust it on each client device: the "Client
 trust" section of `docs/forgejo-operations.md`.
 

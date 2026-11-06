@@ -31,3 +31,5 @@
 | Reproduce procedure is now the Ansible playbook in ansible/ | decision | high | ansible, deployment, playbook, idempotent, uv | | archive/2026-10-18-ansible-playbook-replaces-steps.md |
 | Ansible gotchas hit during the playbook build: fake handlers, tags, globs, facts | warning | medium | ansible, idempotent, tags, check-mode | | archive/2026-10-18-ansible-gotchas-fake-handlers-tags.md |
 | Forgejo SSH clone URL comes from SSH_DOMAIN, default localhost | warning | high | forgejo, ssh, clone-url, app-ini, server-config | | archive/2026-10-24-ssh-clone-url-from-ssh-domain.md |
+| Spare Debian 13 test host approved for recipe verification | decision | high | deployment, testing, test-host, recipe, restore-drill | | archive/2026-11-06-test-host-approved-for-recipe-verification.md |
+| Fresh-install gaps the playbook had to fix, measured on the test host | warning | high | ansible, fresh-install, runner, timezone, certs, restore, admin-user | | archive/2026-11-06-fresh-install-gaps-found-on-test-host.md |

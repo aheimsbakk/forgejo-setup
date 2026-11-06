@@ -1,0 +1,11 @@
+# Per-deployment parameter store; never commit real addresses, key
+# paths or credentials.
+hosts.yml
+hosts.test.yml
+
+# Control environment.
+.venv/
+
+# Certificate copies fetched by the playbook (public, but regenerated
+# on every run; keep the tree clean).
+certs/

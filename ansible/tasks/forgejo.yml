@@ -19,7 +19,7 @@
 - name: Write the deployment address record for gen-cert.sh
   ansible.builtin.copy:
     dest: "{{ opt_dir }}/.env"
-    content: "LAN_IP={{ lan_ip }}\n"
+    content: "LAN_IP={{ lan_ip }}\nLAN_NAME={{ lan_name }}\n"
     mode: '0600'
 
 - name: Deploy the operational scripts
@@ -65,9 +65,13 @@
       create it, then re-pin every client
 
 - name: Fetch the public certificate for client and CI pinning
+  # Inside the playbook directory so the folder is self-contained;
+  # certs/ is gitignored here. The copy is per-host: with more than
+  # one instance (e.g. a test host overriding lan_name), one shared
+  # file would carry whichever target ran last.
   ansible.builtin.fetch:
     src: "{{ cert_file }}"
-    dest: "../tmp/certs/forgejo.crt"
+    dest: "{{ playbook_dir }}/certs/{{ inventory_hostname }}/forgejo.crt"
     flat: true
   check_mode: false
 
@@ -139,6 +143,14 @@
     state: started
   loop: [forgejo-backup.timer, forgejo-cleanup.timer]
 
+- name: Create the engine registry trust directory
+  # copy does not create parent directories; a fresh target has no
+  # certs.d entry for this instance yet.
+  ansible.builtin.file:
+    path: "/etc/containers/certs.d/{{ lan_name }}"
+    state: directory
+    mode: '0755'
+
 - name: Make the engine trust the instance registry
   ansible.builtin.copy:
     src: "{{ cert_file }}"
@@ -191,11 +203,14 @@
       http://{{ lan_ip }}/ must answer 307 to https://{{ lan_name }}/;
       got '{{ http_code.stdout }}'
 
-- name: Read the name pin inside the app and runner containers
+- name: Read the name pin inside the app container
+  # The runner container is checked in runner.yml: on a fresh install
+  # it is not registered yet at this point, and an unregistered runner
+  # daemon exits, so its container is not running here.
   ansible.builtin.command: "podman exec {{ item }} getent ahostsv4 {{ lan_name }}"
   changed_when: false
   check_mode: false
-  loop: [forgejo-forgejo, forgejo-runner-forgejo-runner]
+  loop: [forgejo-forgejo]
   register: name_pins
 
 - name: Assert the name pin answers with the LAN address alone

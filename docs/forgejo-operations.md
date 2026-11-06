@@ -91,7 +91,7 @@ reject the instance. Check the fingerprint first
 (`openssl x509 -in forgejo.crt -noout -fingerprint -sha256`) and compare
 it with what `gen-cert.sh` printed.
 
-1. Copy `tmp/certs/forgejo.crt` to the device.
+1. Copy `ansible/certs/forgejo/forgejo.crt` to the device.
 2. Add it to that device's trust store:
    - Debian/Ubuntu: `cp forgejo.crt /usr/local/share/ca-certificates/forgejo-lan.crt && sudo update-ca-certificates`
    - Windows: `certutil -addstore ROOT forgejo.crt` (elevated), or

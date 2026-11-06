@@ -93,6 +93,24 @@
     - "{{ runner_dir }}"
     - "{{ backup_dir }}"
 
+- name: Look for /etc/timezone
+  ansible.builtin.stat:
+    path: /etc/timezone
+  register: tz_host
+
+- name: Ensure /etc/timezone exists for the pod mounts
+  # Both pod definitions mount /etc/timezone; podman kube play fails to
+  # start a pod when a hostPath source is missing. Installed Debian has
+  # the file, fresh cloud images (measured on Debian 13) may not, and
+  # podman can leave an empty directory behind where it created one.
+  # Create the file only when the path is absent; leave anything that
+  # exists (file or directory) untouched.
+  ansible.builtin.copy:
+    content: "Etc/UTC\n"
+    dest: /etc/timezone
+    mode: '0644'
+  when: not tz_host.stat.exists
+
 - name: Restrict Avahi to the LAN interface
   ansible.builtin.lineinfile:
     path: /etc/avahi/avahi-daemon.conf

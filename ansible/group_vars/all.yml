@@ -17,8 +17,9 @@ runner_image: data.forgejo.org/forgejo/runner:13.1.0
 # Default job image label: node + git, so mirrored JS actions work.
 runner_job_label: docker:docker://node:24-bookworm
 
-# Used only by admin-credential tasks (fresh installs).
-forgejo_admin_user: admin
+# Used only by admin-credential tasks (fresh installs). "admin" is a
+# reserved name in Forgejo 16: pick any other operator account name.
+forgejo_admin_user: siteadmin
 
 # Runner mitigations: 2 vCPUs, 4 GB RAM, no swap - do not raise.
 runner_capacity: 2

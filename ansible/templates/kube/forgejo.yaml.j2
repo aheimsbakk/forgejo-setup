@@ -17,7 +17,7 @@ spec:
   hostAliases:
     - ip: "{{ lan_ip }}"
       hostnames:
-        - "forgejo.local"
+        - "{{ lan_name }}"
   containers:
     - name: forgejo
       # Pinned stable release. Bump deliberately; never use :latest.
@@ -57,15 +57,15 @@ spec:
         # containers). The address still serves; it only shows the
         # warning.
         - name: FORGEJO__server__DOMAIN
-          value: forgejo.local
+          value: {{ lan_name }}
         # SSH_DOMAIN alone forms the SSH clone URL shown in the UI and
         # API (ssh://git@<SSH_DOMAIN>:<SSH_PORT>/...). It does not
         # inherit DOMAIN and defaults to localhost, so leaving it unset
         # puts a host that serves no git in front of everyone cloning.
         - name: FORGEJO__server__SSH_DOMAIN
-          value: forgejo.local
+          value: {{ lan_name }}
         - name: FORGEJO__server__ROOT_URL
-          value: https://forgejo.local/
+          value: https://{{ lan_name }}/
         - name: FORGEJO__server__HTTP_PORT
           value: "3000"
         # HTTPS with the self-signed certificate from gen-cert.sh. Absolute

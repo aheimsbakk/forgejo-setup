@@ -81,6 +81,30 @@ Tags: `base`, `forgejo`, `runner`, `verify` (opt-in). Edit
 and restarts the affected pod. `--check --diff` on a converged target
 must report `changed=0`.
 
+### Verifying playbook changes on the test host
+
+`ansible/hosts.test.yml` (untracked) points at the spare test host
+(`192.168.1.41`, `lan_name: forge-dev.local`). The host is named
+`forgejo-test` inside a group called `forgejo` — `site.yml` targets
+that name, and the distinct host name keeps fetched certs in
+`ansible/certs/<inventory-host>/forgejo.crt` apart. The admin
+credentials there are fake test values; `admin` is a reserved
+username in Forgejo 16. Never run the playbook against the test host
+with the production inventory, or with production data.
+
+Verification sequence before touching production:
+
+```bash
+cd ansible
+../.venv/bin/ansible-playbook -i hosts.test.yml site.yml          # full converge
+../.venv/bin/ansible-playbook -i hosts.test.yml site.yml          # must show changed=0
+../.venv/bin/ansible-playbook -i hosts.test.yml site.yml --tags verify
+```
+
+The CI smoke check and the restore drill follow `ansible/docs/`
+(`ci-and-registry.md`, `restore.md`) on that host. Production only
+gets `--check` runs until the change is approved for apply.
+
 ### `ansible/files/backup.sh`
 
 Creates one Forgejo dump per run and keeps only the 7 newest in
@@ -156,7 +180,7 @@ by hand on a target:
 ```bash
 scp -i <key> ansible/files/gen-cert.sh root@<ip>:/opt/forgejo/
 ssh -i <key> root@<ip> 'chmod 755 /opt/forgejo/gen-cert.sh && /opt/forgejo/gen-cert.sh'
-scp -i <key> root@<ip>:/srv/forgejo-certs/forgejo.crt tmp/certs/forgejo.crt
+scp -i <key> root@<ip>:/srv/forgejo-certs/forgejo.crt ansible/certs/forgejo/forgejo.crt
 ```
 
 The script prints the SHA-256 fingerprint; compare it when checking a

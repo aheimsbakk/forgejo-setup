@@ -3,6 +3,7 @@ tmp/
 .ssh/
 .venv/
 ansible/hosts.yml
+ansible/hosts.test.yml
 .vscode/
 
 todo.txt

@@ -29,11 +29,25 @@
   register: reg_response
 
 - name: Register the runner (first time only)
+  # The registration container dials the instance by its canonical
+  # name over HTTPS, so it needs the name pin (--add-host: nothing
+  # serves .local inside a container network) and the instance
+  # certificate in /etc/ssl/certs (the runner's Go client). Without
+  # the pin the register call hangs in name resolution, so the whole
+  # command carries a hard timeout. --userns=host and --user 0: the
+  # global containers.conf userns=auto remaps the container's root off
+  # host uid 0 (kube play ignores that setting, plain podman run does
+  # not), so without the flag neither generate-config nor register can
+  # write into the root-owned runner dir.
   ansible.builtin.shell: >
     set -e;
-    podman run --rm -v {{ runner_dir }}:/data {{ runner_image }}
+    podman run --rm --user 0 --userns=host -v {{ runner_dir }}:/data {{ runner_image }}
     forgejo-runner generate-config > {{ runner_dir }}/config.yaml;
-    podman run --rm -v {{ runner_dir }}:/data {{ runner_image }}
+    timeout 300 podman run --rm --user 0 --userns=host
+    -v {{ runner_dir }}:/data
+    -v {{ cert_file }}:/etc/ssl/certs/forgejo-register.crt:ro
+    --add-host={{ lan_name }}:{{ lan_ip }}
+    {{ runner_image }}
     forgejo-runner register --config /data/config.yaml
     --instance https://{{ lan_name }}/ --token '{{ reg_token }}'
     --labels '{{ runner_job_label }}' --no-interactive
@@ -56,11 +70,29 @@
     enabled: true
     state: started
 
-- name: Restart the runner pod after a configuration change  # noqa: no-handler
+- name: Restart the runner pod after registration or a config change  # noqa: no-handler
+  # A fresh install started the pod before registration existed, so
+  # the daemon exited; the restart picks up the registration and the
+  # deployed config together. On a converged host neither condition
+  # fires and the pod is left alone.
   ansible.builtin.systemd:
     name: podman-kube@opt-forgejo-kube-runner.yaml.service
     state: restarted
-  when: runner_config.changed
+  when: not runner_reg.stat.exists or runner_config.changed
+
+- name: Read the name pin inside the runner container
+  ansible.builtin.command: "podman exec forgejo-runner-forgejo-runner getent ahostsv4 {{ lan_name }}"
+  changed_when: false
+  check_mode: false
+  register: runner_name_pin
+
+- name: Assert the runner container name pin answers with the LAN address alone
+  ansible.builtin.assert:
+    that: runner_name_pin.stdout.split('\n')[0].split()[0] == lan_ip
+    fail_msg: >-
+      {{ lan_name }} does not resolve to {{ lan_ip }} inside the runner
+      container (got: {{ runner_name_pin.stdout_lines[0] | default('nothing') }});
+      the pod hostAliases pin is wrong or the pod needs a restart
 
 - name: Read the runner job configuration for verification
   ansible.builtin.command: >-
