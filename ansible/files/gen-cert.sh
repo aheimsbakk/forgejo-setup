@@ -1,8 +1,10 @@
 #!/bin/bash
 # Create the self-signed TLS certificate Forgejo serves HTTPS with.
-# Run on the target as root. LAN_IP is read from the deployment env file
-# so the certificate always names the address the instance is published
-# on.
+# Run on the target as root. LAN_IP and LAN_NAME are read from the
+# deployment env file so the certificate names exactly what the
+# instance is published as. LAN_NAME must match the playbook's
+# lan_name: the pod definitions and asserts check the certificate
+# against that value, so a hardcoded name here would drift.
 #
 # Browsers, git clients and CI pin this certificate. Regenerating it
 # breaks those pins, so an existing pair that still covers the current
@@ -19,17 +21,22 @@ CERT_FILE=$CERT_DIR/forgejo.crt
 KEY_FILE=$CERT_DIR/forgejo.key
 ENV_FILE=/opt/forgejo/.env
 DAYS=1825 # 5 years; pins must be re-armed on every client after this
-LAN_NAME=forgejo.local
 
-# LAN_IP is read, not sourced: the file is a flat KEY=value list and
-# parsing it keeps this script free of dynamic command execution.
+# LAN_IP and LAN_NAME are read, not sourced: the file is a flat
+# KEY=value list and parsing it keeps this script free of dynamic
+# command execution.
 [ -f "$ENV_FILE" ] || {
-	echo "missing $ENV_FILE; it must define LAN_IP" >&2
+	echo "missing $ENV_FILE; it must define LAN_IP and LAN_NAME" >&2
 	exit 1
 }
 LAN_IP=$(sed -n 's/^LAN_IP=//p' "$ENV_FILE" | head -n 1)
 if [[ ! $LAN_IP =~ ^[0-9]{1,3}(\.[0-9]{1,3}){3}$ ]]; then
 	echo "LAN_IP in $ENV_FILE is not an IPv4 address: '$LAN_IP'" >&2
+	exit 1
+fi
+LAN_NAME=$(sed -n 's/^LAN_NAME=//p' "$ENV_FILE" | head -n 1)
+if [[ ! $LAN_NAME =~ ^[A-Za-z0-9]([A-Za-z0-9-]*[A-Za-z0-9])?(\.[A-Za-z0-9]([A-Za-z0-9-]*[A-Za-z0-9])?)+$ ]]; then
+	echo "LAN_NAME in $ENV_FILE is not a DNS name: '$LAN_NAME'" >&2
 	exit 1
 fi
 

@@ -1,5 +1,32 @@
 # Changelog
 
+## [0.11.0] - 2026-11-06
+
+- **why:** Make `ansible/` a self-contained recipe bundle and prove it by a fresh converge, CI smoke run, and restore drill on a spare test host before touching production.
+- **model:** kompis/qwen3.8-flash-next-iq3_s
+- **tags:** ansible, recipe, test-host, actions, restore
+
+### Added
+
+- `ansible/README.md` and `ansible/docs/`: operations, restore, ci-and-registry, and development-notes guides for the recipe
+- `ansible/repo-templates/build-multiarch.yml`: copy-in template for multi-arch buildah image builds
+- `ansible/.gitignore`: per-deployment inventories, control venv, fetched cert copies
+- `lan_name` parameter: `.env` gains `LAN_NAME` (`tasks/forgejo.yml`), `files/gen-cert.sh` reads it, and both kube templates use it instead of the hard-coded `forgejo.local`
+- `CONTRIBUTING.md`: test-host verification sequence (`hosts.test.yml`, host `forgejo-test` in a `forgejo` group, converge twice, verify tag, smoke, drill)
+
+### Changed
+
+- Default admin account is `siteadmin` (`group_vars/all.yml`, `hosts.yml.example`); Forgejo 16 reserves `admin`
+- Fetched certificates land in `ansible/certs/<inventory-host>/forgejo.crt`, so targets no longer overwrite each other's copy
+- Restore docs: create the check token after the restore (a dump predates any earlier token), and a CLI-generated token only works as the basic-auth password
+
+### Fixed
+
+- `tasks/base.yml`: create `/etc/timezone` only when absent; copying onto the empty directory podman left on production aborted the run
+- `tasks/runner.yml`: `register` runs with `--user 0 --userns=host` (plain `podman run` root cannot write `.runner`), pins `{{ lan_name }}` with `--add-host`, mounts the CA cert, and allows 300 s for the first image pull
+- `tasks/forgejo.yml`: create `/etc/containers/certs.d/<lan_name>/` before the cert copy
+- The runner pod restarts when `.runner` registration data is missing, not only on config change
+
 ## [0.10.1] - 2026-10-24
 
 - **why:** The UI and API showed `ssh://git@localhost:2222/...` as the SSH clone URL. `[server] SSH_DOMAIN` forms that URL alone, does not inherit `DOMAIN`, and defaults to `localhost`.

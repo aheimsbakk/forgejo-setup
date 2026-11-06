@@ -14,7 +14,14 @@ all:
       lan_ip: 192.0.2.40
       # DNS server containers use (the LAN resolver, not the host stub).
       lan_resolver: 192.0.2.1
+      # Override lan_name and static_hostname when a second instance
+      # shares the LAN: Avahi announces <static_hostname>.local, so two
+      # default-named machines would clash on one name. Keep
+      # lan_name equal to static_hostname plus ".local".
+      # lan_name: forgejo.local
+      # static_hostname: forgejo
       # Uncomment when the admin account is needed (fresh installs:
-      # admin creation and runner registration):
-      # forgejo_admin_user: admin
+      # admin creation and runner registration). "admin" is reserved
+      # by Forgejo 16, so choose another name:
+      # forgejo_admin_user: siteadmin
       # forgejo_admin_password: change-me
