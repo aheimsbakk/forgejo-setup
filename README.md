@@ -31,7 +31,7 @@ as root on it.
    create the parameter store from `ansible/hosts.yml.example` (target
    IP, LAN resolver, SSH key, admin account and password), then apply
    with `ansible-playbook site.yml`.
-3. Import the certificate (`tmp/certs/forgejo.crt`) on the device you
+3. Import the certificate (`ansible/certs/forgejo/forgejo.crt`) on the device you
    browse from — the "Client trust" section of
    `docs/forgejo-operations.md` lists the command for each OS.
 4. Open `https://forgejo.local/` in a browser and sign in with the

@@ -17,11 +17,14 @@ Concrete mapping from `BLUEPRINT.md` components to physical files.
 ├── .gitignore                       ignores tmp/, .env, .venv/, ansible/hosts.yml
 ├── ansible/                         playbook component: the reproduce procedure
 │   ├── ansible.cfg                  inventory path, accept-new host keys, python3
+│   ├── .gitignore                   ignores hosts.yml, hosts.test.yml, .venv/, certs/
+│   ├── README.md                    recipe README: self-contained usage docs
 │   ├── requirements.txt             pinned ansible-core version
 │   ├── requirements-lint.txt        pinned ansible-lint version
 │   ├── site.yml                     entry point: imports the four task files
 │   ├── hosts.yml                    parameter store (gitignored)
 │   ├── hosts.yml.example            parameter store template
+│   ├── hosts.test.yml               test-host inventory (gitignored)
 │   ├── group_vars/all.yml           tracked settings: images, paths, limits
 │   ├── tasks/
 │   │   ├── base.yml                 hostname, apt, podman, dirs, Avahi  [tag base]
@@ -33,14 +36,22 @@ Concrete mapping from `BLUEPRINT.md` components to physical files.
 │   │   ├── kube/runner.yaml.j2      Actions runner pod definition
 │   │   ├── containers.conf.j2       engine defaults: job userns and DNS
 │   │   └── runner-config.yaml.j2    runner job configuration (full file)
-│   └── files/                       deployed verbatim to /opt/forgejo/
-│       ├── gen-cert.sh              certificate component: self-signed cert
-│       ├── backup.sh                backup component: dump + retention
-│       ├── cleanup.sh               disk cleanup: unused images, containers
-│       ├── forgejo-backup.service   backup activation (oneshot unit)
-│       ├── forgejo-backup.timer     backup schedule (daily, catch-up)
-│       ├── forgejo-cleanup.service  cleanup activation (oneshot unit)
-│       └── forgejo-cleanup.timer    cleanup schedule (daily, catch-up)
+│   ├── files/                       deployed verbatim to /opt/forgejo/
+│   │   ├── gen-cert.sh              certificate component: self-signed cert
+│   │   ├── backup.sh                backup component: dump + retention
+│   │   ├── cleanup.sh               disk cleanup: unused images, containers
+│   │   ├── forgejo-backup.service   backup activation (oneshot unit)
+│   │   ├── forgejo-backup.timer     backup schedule (daily, catch-up)
+│   │   ├── forgejo-cleanup.service  cleanup activation (oneshot unit)
+│   │   └── forgejo-cleanup.timer    cleanup schedule (daily, catch-up)
+│   ├── repo-templates/
+│   │   └── build-multiarch.yml      default multiarch image build workflow
+│   ├── certs/                       fetched public certificate (gitignored)
+│   └── docs/                        recipe copy: self-contained operations docs
+│       ├── operations.md            cert trust/renewal, backup, cleanup
+│       ├── restore.md               restore procedure for a dump
+│       ├── ci-and-registry.md       runner, registry, mirrored actions
+│       └── development-notes.md     traps and patterns for playbook work
 ├── docs/
 │   ├── forgejo-install-recipe.md    recipe component: parameters,
 │   │                                decisions, change register
@@ -80,16 +91,17 @@ Concrete mapping from `BLUEPRINT.md` components to physical files.
 | Playbook | `ansible/site.yml`, `ansible/tasks/base.yml`, `ansible/tasks/forgejo.yml`, `ansible/tasks/runner.yml`, `ansible/tasks/verify.yml`, `ansible/ansible.cfg`, `ansible/requirements.txt` |
 | Recipe | `docs/forgejo-install-recipe.md`, `docs/forgejo-install-steps.md`, `docs/forgejo-footguns.md`, `docs/forgejo-ci-and-registry.md`, `docs/forgejo-operations.md`, `docs/forgejo-restore.md`, `docs/forgejo-operations-verification.md`, `docs/forgejo-backup-restore-verification.md`, `docs/forgejo-podman-migration-verification.md` |
 | Service configuration | `ansible/templates/kube/forgejo.yaml.j2`, `ansible/templates/kube/runner.yaml.j2`, `ansible/templates/containers.conf.j2`, `ansible/templates/runner-config.yaml.j2`, `ansible/group_vars/all.yml` |
-| Certificate | `ansible/files/gen-cert.sh`; exported copy `tmp/certs/forgejo.crt` (untracked) |
+| Certificate | `ansible/files/gen-cert.sh`; exported copy `ansible/certs/forgejo/forgejo.crt` (untracked, per inventory host) |
 | Backup | `ansible/files/backup.sh`, `ansible/files/forgejo-backup.service`, `ansible/files/forgejo-backup.timer`; restore procedure `docs/forgejo-restore.md` |
 | Disk cleanup | `ansible/files/cleanup.sh`, `ansible/files/forgejo-cleanup.service`, `ansible/files/forgejo-cleanup.timer`; grace record `/var/lib/forgejo-cleanup/unused-images.tsv` (on the target, untracked) |
-| Parameter store | `ansible/hosts.yml` (untracked), `ansible/hosts.yml.example`, `ansible/group_vars/all.yml` |
+| Parameter store | `ansible/hosts.yml` (untracked), `ansible/hosts.yml.example`, `ansible/hosts.test.yml` (untracked, second host for recipe verification), `ansible/group_vars/all.yml` |
 | Discovery | `ansible/tasks/base.yml` (packages + Avahi interface pin) and `ansible/templates/runner-config.yaml.j2` (name mapping for job containers) |
 | CI runner | `ansible/templates/kube/runner.yaml.j2`, `ansible/templates/runner-config.yaml.j2`, `ansible/tasks/runner.yml`; job settings `/srv/forgejo-runner/config.yaml` (on the target, generated) |
 | Container pipeline | `docs/reports/2026-10-11-container-pipeline-build-push-use.md` (test record); target trust file `/etc/containers/certs.d/forgejo.local/forgejo.crt` (recipe change 43); test repositories `agent/container-build-test` and `agent/container-use-test` (on the instance) |
 | Investigation reports | `docs/reports/` — dated records, written once and not maintained afterwards |
 | Task records | `tasks/` — proposals or completed work records; not part of the deployed state unless copied by the playbook |
-| Repository templates | `templates/build-multiarch.yml` — copied into new repositories as `.forgejo/workflows/build-multiarch.yml` or `.github/workflows/build-multiarch.yml` |
+| Repository templates | `templates/build-multiarch.yml` and its self-contained copy `ansible/repo-templates/build-multiarch.yml` — copied into new repositories as `.forgejo/workflows/build-multiarch.yml` or `.github/workflows/build-multiarch.yml` |
+| Recipe bundle (self-contained copy for a recipes repo) | everything under `ansible/`: playbook plus `ansible/README.md`, `ansible/docs/` (operations, restore, ci-and-registry, development-notes), `ansible/repo-templates/`, `ansible/.gitignore`. The `docs/` originals stay as this deployment's record; the `ansible/docs/` copies are the operator-facing recipe |
 
 ## Entry points
 
@@ -98,7 +110,9 @@ Concrete mapping from `BLUEPRINT.md` components to physical files.
   (`ansible/requirements.txt`) in a uv virtualenv.
   `docs/forgejo-install-steps.md` is the runbook;
   `docs/forgejo-install-recipe.md` holds the parameters, the decisions
-  and the change register it implements.
+  and the change register it implements. Verification target:
+  `ansible/hosts.test.yml` (`-i hosts.test.yml`) points at the spare
+  Debian 13 test host; the production inventory stays the default.
 - Pod start: `podman-kube@opt-forgejo-kube-forgejo.yaml.service` and
   `podman-kube@opt-forgejo-kube-runner.yaml.service` on the target. The
   instance name is the YAML path with `/` replaced by `-`.
@@ -139,7 +153,7 @@ Concrete mapping from `BLUEPRINT.md` components to physical files.
   the source of application configuration on the target.
 - TLS state on the target: `/srv/forgejo-certs/forgejo.crt` and
   `forgejo.key`. The key never leaves the machine; the `.crt` is copied
-  to `tmp/certs/` (gitignored) for client and CI pinning, and to
+  to `ansible/certs/` (gitignored) for client and CI pinning, and to
   `/etc/containers/certs.d/forgejo.local/forgejo.crt` so the engine
   trusts the instance's own registry (recipe change 43). The engine picks
   these files by extension, so the `.crt` suffix is required.
